@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TOE Effect Camera</title>
+<meta name="description" content="100種類のリアルタイムエフェクトを備えたカメラ">
+<meta name="theme-color" content="#0b0b0c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TOE Cam">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* layout: full-bleed viewfinder; type set like lens-barrel engraving (tracked caps); one warm white, hairlines, red only for recording */
+  --bg:#0b0b0c; --sheet:rgba(15,15,16,.9); --line:rgba(242,239,233,.14); --line-2:rgba(242,239,233,.28);
+  --text:#f2efe9; --dim:#9a968f; --faint:#6a6762; --rec:#d8452e;
+  --caps:"Jost","Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif;
+  --body:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif;
+  --st:env(safe-area-inset-top,0px); --sb:env(safe-area-inset-bottom,0px); --sl:env(safe-area-inset-left,0px); --sr:env(safe-area-inset-right,0px);
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:400 14px/1.6 var(--body);overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+:focus-visible{outline:1px solid var(--text);outline-offset:3px}
+svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;display:block}
+.caps{font-family:var(--caps);font-weight:500;letter-spacing:.16em;text-transform:uppercase}
+
+#stage{position:absolute;inset:0;background:#000;touch-action:none}
+#view{width:100%;height:100%;display:block}
+
+#top{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:calc(14px + var(--st)) calc(18px + var(--sr)) 34px calc(18px + var(--sl));background:linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,0));pointer-events:none}
+#top>*{pointer-events:auto}
+.brand{display:flex;flex-direction:column;gap:1px}
+.brand b{font:600 17px/1 var(--caps);letter-spacing:.34em}
+.brand span{font:500 8.5px/1.6 var(--caps);letter-spacing:.3em;color:var(--dim)}
+.tools{display:flex;gap:6px}
+.ico{width:40px;height:40px;display:grid;place-items:center;border-radius:50%;color:var(--text)}
+.ico:active{background:rgba(255,255,255,.1)}
+#recTime{position:absolute;left:50%;top:calc(18px + var(--st));transform:translateX(-50%);font:500 13px/1 var(--caps);letter-spacing:.12em;font-variant-numeric:tabular-nums;display:none;align-items:center;gap:8px}
+#recTime::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--rec)}
+body.rec #recTime{display:flex}
+
+#dock{position:absolute;left:0;right:0;bottom:0;padding:70px 0 calc(16px + var(--sb));display:flex;flex-direction:column;gap:14px;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.62) 46%,rgba(0,0,0,.84));pointer-events:none}
+#dock>*{pointer-events:auto}
+#title{padding:0 calc(20px + var(--sr)) 0 calc(20px + var(--sl));pointer-events:none;transition:opacity .6s}
+#title.idle{opacity:0}
+#tOver{font:500 10px/1 var(--caps);letter-spacing:.24em;color:var(--dim);margin-bottom:7px;font-variant-numeric:tabular-nums}
+#tName{font:500 24px/1.15 var(--caps);letter-spacing:.05em;text-wrap:balance}
+#tDesc{font-size:12.5px;color:#d0cdc6;margin-top:5px;max-width:34em}
+#note{margin:0 calc(20px + var(--sr)) 0 calc(20px + var(--sl));font-size:12px;color:#d0cdc6;border-left:1px solid var(--line-2);padding-left:10px;max-width:38em;pointer-events:none}
+#note:empty{display:none}
+
+#cats{display:flex;justify-content:center;gap:clamp(12px,4.6vw,34px);padding:0 16px;flex-wrap:wrap}
+#cats button{font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
+#cats button[aria-pressed="true"]{color:var(--text)}
+#cats button[aria-pressed="true"]::after{content:"";position:absolute;left:50%;bottom:0;width:3px;height:3px;border-radius:50%;background:var(--text);transform:translateX(-50%)}
+#strip{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 calc(50% - 60px);scroll-snap-type:x proximity}
+#strip::-webkit-scrollbar{display:none}
+#strip button{flex:none;scroll-snap-align:center;font:400 14px/1 var(--caps);letter-spacing:.06em;color:var(--dim);padding:9px 12px;white-space:nowrap;border-bottom:1px solid transparent;transition:color .2s}
+#strip button[aria-selected="true"]{color:var(--text);font-weight:500;border-bottom-color:var(--text)}
+#strip button i{font-style:normal;font-size:9.5px;letter-spacing:.1em;color:var(--faint);margin-right:7px;font-variant-numeric:tabular-nums}
+#strip button .au{font-size:9px;margin-left:5px;color:var(--faint)}
+
+#bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;padding:2px calc(20px + var(--sr)) 0 calc(20px + var(--sl))}
+.txt{font:500 10.5px/1 var(--caps);letter-spacing:.22em;color:var(--text);padding:14px 2px;justify-self:start;align-self:center}
+#bAdj{justify-self:end}
+#mid{display:flex;flex-direction:column;align-items:center;gap:12px}
+#modes{display:flex;gap:18px}
+#modes button{font:500 9.5px/1 var(--caps);letter-spacing:.24em;color:var(--faint);padding:4px 0}
+#modes button[aria-pressed="true"]{color:var(--text)}
+#shutter{width:68px;height:68px;border-radius:50%;border:1.5px solid var(--text);position:relative;transition:transform .12s}
+#shutter::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--text);transition:all .18s}
+#shutter:active{transform:scale(.95)}
+body.video #shutter::after{background:var(--rec)}
+body.rec #shutter::after{inset:22px;border-radius:5px}
+
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;background:var(--sheet);backdrop-filter:blur(22px) saturate(1.2);-webkit-backdrop-filter:blur(22px) saturate(1.2);border-top:1px solid var(--line);border-radius:18px 18px 0 0;max-height:64%;display:flex;flex-direction:column;transform:translateY(102%);visibility:hidden;transition:transform .28s cubic-bezier(.2,.8,.2,1),visibility .28s;-webkit-user-select:none}
+.sheet.open{transform:none;visibility:visible}
+.sheet.full{top:0;max-height:none;border-radius:0;border-top:0;background:rgba(11,11,12,.95)}
+@media (min-width:860px){.sheet:not(.full){left:auto;right:18px;bottom:18px;width:380px;max-height:calc(100% - 36px);border:1px solid var(--line);border-radius:18px}}
+@media (prefers-reduced-motion:reduce){.sheet,#title,#shutter::after{transition:none}}
+.sheet header{display:flex;align-items:center;justify-content:space-between;padding:calc(16px) 20px 12px}
+.sheet.full header{padding:calc(16px + var(--st)) calc(20px + var(--sr)) 12px calc(20px + var(--sl))}
+.sheet h2{font:500 12px/1 var(--caps);letter-spacing:.26em;margin:0}
+.sheet h2 small{font:400 10px/1 var(--caps);letter-spacing:.16em;color:var(--dim);margin-left:12px}
+.sheet .body{overflow-y:auto;padding:4px 20px calc(22px + var(--sb));display:flex;flex-direction:column;gap:18px;overscroll-behavior:contain}
+.sheet.full .body{padding:4px calc(20px + var(--sr)) calc(28px + var(--sb)) calc(20px + var(--sl))}
+.close{color:var(--dim);width:36px;height:36px;display:grid;place-items:center;margin-right:-8px}
+
+.filters{display:flex;gap:18px}
+.filters button{font:500 10.5px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:6px 0;border-bottom:1px solid transparent}
+.filters button[aria-pressed="true"]{color:var(--text);border-bottom-color:var(--text)}
+.folder h3{display:flex;align-items:baseline;gap:12px;margin:10px 0 10px;padding-bottom:10px;border-bottom:1px solid var(--line);font:500 15px/1 var(--caps);letter-spacing:.2em}
+.folder h3 .n{font-size:10px;color:var(--faint);letter-spacing:.14em;font-variant-numeric:tabular-nums}
+.folder h3 small{font:400 11.5px/1.3 var(--body);letter-spacing:0;color:var(--dim);text-transform:none}
+.folder h3 em{margin-left:auto;font:400 10px/1 var(--caps);letter-spacing:.14em;color:var(--faint);font-style:normal;font-variant-numeric:tabular-nums}
+.folder+.folder{margin-top:22px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:0 18px}
+.item{display:flex;align-items:center;border-bottom:1px solid rgba(242,239,233,.06);min-width:0}
+.item .go{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px;text-align:left;padding:11px 0;font:400 14px/1.2 var(--caps);letter-spacing:.04em;color:#d6d3cc}
+.item .go i{font-style:normal;font-size:9.5px;color:var(--faint);letter-spacing:.1em;font-variant-numeric:tabular-nums}
+.item .go span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.cur .go{color:var(--text);font-weight:500}
+.item.cur .go span{border-bottom:1px solid var(--text)}
+.item .fav{width:32px;height:36px;display:grid;place-items:center;color:var(--faint)}
+.item .fav svg{width:14px;height:14px}
+.item .fav[aria-pressed="true"]{color:var(--text)}
+.item .fav[aria-pressed="true"] svg{fill:currentColor}
+.empty{color:var(--dim);font-size:13px;padding:18px 0}
+
+.ctl{display:grid;grid-template-columns:minmax(0,1fr) 46px;gap:6px 12px;align-items:center}
+.ctl label{grid-column:1/3;display:flex;justify-content:space-between;font:500 10px/1 var(--caps);letter-spacing:.2em;color:var(--dim)}
+.ctl label b{font-weight:500;color:var(--text)}
+.ctl output{font:400 11px/1 var(--caps);letter-spacing:.06em;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:none;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:1px;background:var(--line-2)}
+input[type=range]::-moz-range-track{height:1px;background:var(--line-2)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--text);margin-top:-6.5px}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;background:var(--text)}
+input[type=color]{width:46px;height:22px;border:1px solid var(--line-2);border-radius:4px;background:none;padding:0}
+details{border-top:1px solid var(--line);padding-top:12px}
+summary{font:500 10.5px/1 var(--caps);letter-spacing:.2em;color:var(--dim);cursor:pointer;list-style:none;padding:4px 0}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";float:right;font-size:14px;letter-spacing:0}
+details[open] summary::after{content:"\2212"}
+.node{margin-top:14px;display:flex;flex-direction:column;gap:10px}
+.node h4{margin:0;font:500 10.5px/1 var(--caps);letter-spacing:.18em;color:var(--text)}
+.node h4 small{color:var(--faint);margin-left:8px;font-weight:400}
+.auto{font:400 10.5px/1.4 var(--caps);letter-spacing:.06em;color:var(--faint);overflow-wrap:anywhere}
+.rowb{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line-2);border-radius:999px;padding:9px 15px;font:500 10.5px/1 var(--caps);letter-spacing:.16em;color:var(--text);text-transform:uppercase}
+a.btn{text-decoration:none;display:inline-block}
+.btn.jp{font:400 12.5px/1 var(--body);letter-spacing:0;text-transform:none}
+.btn[aria-pressed="true"],.btn.solid{background:var(--text);color:var(--bg);border-color:var(--text)}
+.sec h3{font:500 10px/1 var(--caps);letter-spacing:.24em;color:var(--dim);margin:0 0 10px}
+.sec p{margin:8px 0 0;font-size:12px;color:var(--dim)}
+.sec select,.sec input[type=text]{background:none;border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;color:var(--text);font:400 13px/1 var(--body);-webkit-user-select:text;user-select:text}
+.sec a{color:var(--text)}
+#status{font:400 10.5px/1.5 var(--caps);letter-spacing:.08em;color:var(--faint);font-variant-numeric:tabular-nums}
+
+#shot{position:absolute;inset:0;z-index:9;background:#080809;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:calc(20px + var(--st)) 20px calc(20px + var(--sb))}
+#shot.open{display:flex}
+#shotBox{max-height:68%;display:flex}
+#shot img,#shot video{max-width:100%;max-height:100%;border:1px solid var(--line)}
+#shotHelp{margin:0;font-size:12px;color:var(--dim);text-align:center;min-height:1.6em}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:8}
+#flash.go{animation:fl .32s ease-out}
+@keyframes fl{0%{opacity:.75}100%{opacity:0}}
+#drop{position:absolute;inset:0;z-index:10;display:none;align-items:center;justify-content:center;border:1px solid var(--text);margin:14px;font:500 12px var(--caps);letter-spacing:.24em;background:rgba(0,0,0,.6);pointer-events:none}
+#drop.on{display:flex}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view"></canvas></div>
+<div id="flash"></div>
+
+<header id="top">
+  <div class="brand"><b>TOE</b><span>Effect Camera</span></div>
+  <div id="recTime">0:00</div>
+  <div class="tools">
+    <button class="ico" id="bFlip" aria-label="前面と背面のカメラを切り替える"><svg viewBox="0 0 24 24"><path d="M4.5 9.5A8 8 0 0 1 18.6 7l1.9 2M19.5 14.5A8 8 0 0 1 5.4 17l-1.9-2M20.5 4.5V9H16M3.5 19.500V15H8"/></svg></button>
+    <button class="ico" id="bMenu" aria-label="設定を開く"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 12h3M11 12h9M4 17h12M20 17h0"/><circle cx="16" cy="7" r="1.8"/><circle cx="9" cy="12" r="1.8"/><circle cx="18" cy="17" r="1.8"/></svg></button>
+  </div>
+</header>
+
+<footer id="dock">
+  <div id="title"><div id="tOver"></div><div id="tName"></div><div id="tDesc"></div></div>
+  <p id="note"></p>
+  <nav id="cats" aria-label="フォルダ"></nav>
+  <div id="strip" role="listbox" aria-label="プリセット"></div>
+  <div id="bar">
+    <button class="txt" id="bLib">Library</button>
+    <div id="mid">
+      <div id="modes"><button data-m="photo" aria-pressed="true">Photo</button><button data-m="video" aria-pressed="false">Video</button></div>
+      <button id="shutter" aria-label="撮影する"></button>
+    </div>
+    <button class="txt" id="bAdj">Adjust</button>
+  </div>
+</footer>
+
+<section class="sheet full" id="lib" aria-label="ライブラリ">
+  <header><h2>Library<small id="libCount"></small></h2><button class="close" data-close aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+  <div class="body">
+    <div class="filters"><button id="fAll" aria-pressed="true">All</button><button id="fFav" aria-pressed="false">Favorites</button></div>
+    <div id="libBody"></div>
+  </div>
+</section>
+
+<section class="sheet" id="adj" aria-label="調整">
+  <header><h2>Adjust<small id="adjName"></small></h2><button class="close" data-close aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+  <div class="body" id="adjBody"></div>
+</section>
+
+<section class="sheet" id="menu" aria-label="設定">
+  <header><h2>Settings</h2><button class="close" data-close aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+  <div class="body">
+    <div class="sec"><h3>Input</h3>
+      <div class="rowb"><button class="btn jp" id="bCam">カメラ</button><button class="btn jp" id="bMirror" aria-pressed="false">左右反転</button><button class="btn jp" id="bFile">動画・画像を選ぶ</button><button class="btn jp" id="bDemo">デモ映像</button></div>
+      <p id="srcState"></p></div>
+    <div class="sec"><h3>Sound</h3>
+      <div class="rowb"><button class="btn jp" id="bBeat" aria-pressed="true">オートビート</button><button class="btn jp" id="bMic" aria-pressed="false">マイク</button></div>
+      <p id="micState">♪ の付いたプリセットは音に反応します。</p></div>
+    <div class="sec"><h3>Quality</h3>
+      <select id="quality" aria-label="短辺の解像度"><option value="360">360p（軽い）</option><option value="540">540p</option><option value="720">720p</option><option value="1080">1080p（重い）</option></select></div>
+    <div class="sec" id="secApp"><h3>App</h3>
+      <div class="rowb"><button class="btn jp hide" id="bInstall">アプリとしてインストール</button></div>
+      <p id="appHelp">iPhone は Safari の共有メニューから「ホーム画面に追加」、Android と PC の Chrome はメニューの「インストール」で、アプリとして使えます。</p></div>
+    <div class="sec"><h3>TouchDesigner</h3>
+      <div class="rowb"><button class="btn jp" id="bToe">.toe を読み込む</button><a class="btn jp" id="aClassic" href="classic/">.toe 由来の17プリセット（旧版）</a></div>
+      <p>読み込んだ .toe の TOP ネットワークは「IMPORT」フォルダに追加されます。</p>
+      <p><input type="text" id="fText" value="TOE" maxlength="24" aria-label="Text TOP に表示する文字"></p></div>
+    <div id="status"></div>
+  </div>
+</section>
+
+<div id="shot" role="dialog" aria-label="撮影結果">
+  <div id="shotBox"></div>
+  <p id="shotHelp"></p>
+  <div class="rowb"><a class="btn solid" id="shotSave" download>Save</a><button class="btn hide" id="shotShare">Share</button><button class="btn" id="shotClose">Close</button></div>
+</div>
+<div id="drop" class="caps">Drop .toe / video / image</div>
+<input type="file" id="fToe" accept=".toe,.tox" class="hide">
+<input type="file" id="fMedia" accept="video/*,image/*" class="hide">
+
+<script>
+/*__TOE__*/
+/*__ENGINE__*/
+/*__FX__*/
+/*__PRESETS__*/
+/*__APP__*/
+</script>
+</body>
+</html>

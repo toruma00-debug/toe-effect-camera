@@ -1,28 +1,74 @@
 # TOE Effect Camera
 
-TouchDesigner の .toe プロジェクトに入っている TOP ネットワークを、ブラウザ（WebGL2）でリアルタイムに再現するエフェクトカメラです。
+ブラウザ（WebGL2）で動くリアルタイムのエフェクトカメラです。TouchDesigner の .toe に入っている TOP ネットワークをそのまま実行できるエンジンの上に、オリジナルのプリセットを 100 種類のせています。
 
 **▶ https://toruma00-debug.github.io/toe-effect-camera/**
 
-- カメラ映像に 17 種類のプリセットを適用（「入力」から動画・画像ファイルやデモ映像にも切り替え可）
-- マイク入力で音に反応するプリセットあり（TDwixtor、audio_visual1030、geo）
-- 写真撮影・録画
-- 「ネットワーク」パネルで各ノードの出力表示とパラメータ調整
-- 手元の .toe / .tox をドラッグ&ドロップすると、その場で読み込んで実行
+## プリセット
 
-カメラとマイクは HTTPS のページでのみ使えます。ブラウザは Chrome / Edge / Safari の最新版を想定しています。
+5 つのフォルダに 20 種類ずつ、合計 100 種類です。
+
+| フォルダ | 方向性 | 例 |
+|---|---|---|
+| FILM | フィルムとアナログの質感 | Amber 400 / Halation / Super 8 / VHS Rental / Tintype |
+| GLITCH | デジタルの乱れと信号 | Datamosh / Pixel Stretch / ASCII Term / Thermal / Hologram |
+| LIGHT | 光・グロー・残像 | Neon Edge / Light Trails / Prism / God Rays / Blacklight |
+| GRAPHIC | 印刷とイラストレーション | Halftone / Risograph / Toon / Oil Paint / Blueprint |
+| SPACE | 歪み・時間・立体 | Kaleido / Slit Scan / Time Melt / Point Cloud / Infinity Mirror |
+
+♪ の付いたプリセットは音に反応します（マイクを使わないときは 120BPM のオートビート）。
+
+## 使い方
+
+- 下のフォルダ名とプリセット名をタップ、または画面を左右にスワイプで切り替え（上下スワイプでフォルダ移動）
+- 画面を長押しすると、押している間だけ元の映像を表示
+- **Library**：100 種類の一覧とお気に入り　**Adjust**：かかり具合と各パラメータ　右上：入力・音・画質などの設定
+- **Photo / Video** を選んでシャッター。撮影後に保存・共有
+- キーボード：← → でプリセット、↑ ↓ でフォルダ、スペースで撮影
+
+カメラとマイクは HTTPS のページでのみ使えます。Chrome / Edge / Safari の最新版を想定しています。
+
+## アプリとして使う（PWA）
+
+- iPhone / iPad：Safari の共有メニュー →「ホーム画面に追加」
+- Android / PC の Chrome・Edge：メニューの「インストール」（設定画面のボタンからも可）
+
+インストール後は全画面で起動し、一度開いていれば電波のない場所でも起動できます。
 
 ## 仕組み
 
-1. .toe（TEA-ECB で包まれた zlib ストリーム）をブラウザ内で展開し、オペレーター・接続・パラメータ・エクスプレッションを取り出す
-2. TOP を約 40 種類のシェーダーに対応させ、毎フレーム評価する（Level / Composite / Noise / Blur / Edge / Displace / Feedback / Time Machine など）
-3. CHOP（LFO・Math・音声解析など）と簡単なパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds` など）を評価する
+1. **グラフ形式**：オペレーター（TOP / CHOP）・接続・パラメータ・エクスプレッションを持つネットワーク。.toe から読み出したものも、オリジナルのプリセットも同じ形式です
+2. **エンジン**（`src/engine.js`）：TOP をシェーダーに対応させて毎フレーム評価します（Level / Composite / Blur / Displace / Feedback / Time Machine など約 50 種類）。CHOP（LFO・ノイズ・音声解析）とパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds`、`sin()` など）も評価します
+3. **FX ライブラリ**（`src/fx.js`）：GLSL TOP に相当する 70 種類あまりのシェーダー（フィルムの色と粒子、ハーフトーン、Kuwahara、オプティカルフロー、データモッシュ、万華鏡 など）
+4. **プリセット**（`src/presets.js`）：上の部品をつないだ小さなネットワーク。1 プリセットが 1〜数行です
+5. **.toe の読み込み**（`src/toe.js`）：TEA-ECB で包まれた zlib ストリームをブラウザ内で展開します。設定の「.toe を読み込む」から手元のファイルを実行できます
 
-TouchDesigner の出力と完全には一致しない近似です。Render TOP（3D）は点群・走査線・ワイヤーフレームなど用途別の描画に置き換えています。
+```js
+// 例：動きだけが画を押し流すデータモッシュ
+def('GLITCH', 'Datamosh', '…', g => {
+  const c = g.cam, lo = g.top('res', [g.blur(c, 6)], { outputresolution: 'quarter' }, 'lo');
+  const fl = g.blur(g.fx('flow', [lo, g.prev(lo)], { gain: 1.5 }), 4);          // 前フレームとの差からフロー
+  g.fx('mosh', [g.fb('mosh1', c), fl, c], { carry: 2.2, refresh: .004 }, 'mosh1'); // フィードバックをフローで運ぶ
+  g.out('mosh1');
+});
+```
+
+## ビルド
+
+```
+node build.cjs
+```
+
+`src/` を 1 枚の `index.html` にまとめ、`manifest.webmanifest`・`sw.js`・`icons/` を書き出します（依存パッケージなし）。
+
+## 旧版
+
+.toe から作った 17 プリセットの版は [`classic/`](https://toruma00-debug.github.io/toe-effect-camera/classic/) に残しています。
 
 ## クレジット
 
-- TDwixtor プリセット: uisato 氏の「Realtime Audioreactive Time Remap」プロジェクトの設定値に基づいています
+- 旧版の TDwixtor プリセット: uisato 氏の「Realtime Audioreactive Time Remap」プロジェクトの設定値に基づいています
 - .toe コンテナの形式は [WebToe の TOE-FORMAT.md](https://github.com/frank890417/WebToe/blob/main/docs/TOE-FORMAT.md) の記述を参照しました
+- 書体 Jost（The Jost Project Authors）— SIL Open Font License 1.1（`assets/Jost-OFL.txt`）
 
 TouchDesigner は Derivative Inc. の製品です。本ページは Derivative とは関係ありません。
