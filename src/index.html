@@ -27,7 +27,8 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--text);font:400 14px/1.6 var(--body);overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--text);font:400 14px/1.6 var(--body);overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;position:fixed;inset:0;width:100%}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer;background:none;border:0;padding:0}
 :focus-visible{outline:1px solid var(--text);outline-offset:3px}
@@ -58,6 +59,9 @@ body.rec #recTime{display:flex}
 #tDesc{font-size:12.5px;color:#d0cdc6;margin-top:5px;max-width:34em}
 #note{margin:0 calc(20px + var(--sr)) 0 calc(20px + var(--sl));font-size:12px;color:#d0cdc6;border-left:1px solid var(--line-2);padding-left:10px;max-width:38em;pointer-events:none}
 #note:empty{display:none}
+#retry{padding:0 calc(20px + var(--sr)) 0 calc(20px + var(--sl));pointer-events:none}
+#retry:has(.hide){display:none}
+#retry .btn{pointer-events:auto}
 
 #cats{display:flex;justify-content:center;gap:clamp(12px,4.6vw,34px);padding:0 16px;flex-wrap:wrap}
 #cats button{font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
@@ -88,6 +92,26 @@ body.rec #shutter::after{inset:22px;border-radius:5px}
 .sheet.full{top:0;max-height:none;border-radius:0;border-top:0;background:rgba(11,11,12,.95)}
 @media (min-width:860px){.sheet:not(.full){left:auto;right:18px;bottom:18px;width:380px;max-height:calc(100% - 36px);border:1px solid var(--line);border-radius:18px}}
 @media (prefers-reduced-motion:reduce){.sheet,#title,#shutter::after{transition:none}}
+/* phone held sideways: the shutter and its buttons become a column on the right edge, folders and presets one thin band below */
+@media (orientation:landscape) and (max-height:520px){
+  #dock{padding:22px 0 calc(8px + var(--sb));gap:4px;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.72))}
+  #title{position:fixed;left:0;top:calc(60px + var(--st))}
+  #tName{font-size:18px}
+  #tDesc{font-size:11.5px;margin-top:3px}
+  #note,#retry{position:fixed;left:0;top:calc(130px + var(--st));max-width:54%}
+  #retry{top:calc(188px + var(--st))}
+  #cats{margin-right:calc(96px + var(--sr));gap:22px}
+  #cats button{padding:6px 0 7px}
+  #strip{margin-right:calc(96px + var(--sr))}
+  #strip button{padding:7px 12px}
+  #bar{position:fixed;right:calc(10px + var(--sr));top:calc(54px + var(--st));bottom:calc(6px + var(--sb));width:84px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:0}
+  .txt{padding:10px 2px;letter-spacing:.16em}
+  #mid{gap:8px}
+  #modes{flex-direction:column;align-items:center;gap:2px}
+  #shutter{width:58px;height:58px}
+  .sheet:not(.full){left:auto;right:0;top:0;bottom:0;width:min(360px,56%);max-height:none;border:0;border-left:1px solid var(--line);border-radius:0;padding-right:var(--sr);transform:translateX(102%)}
+  .sheet.open:not(.full){transform:none}
+}
 .sheet header{display:flex;align-items:center;justify-content:space-between;padding:calc(16px) 20px 12px}
 .sheet.full header{padding:calc(16px + var(--st)) calc(20px + var(--sr)) 12px calc(20px + var(--sl))}
 .sheet h2{font:500 12px/1 var(--caps);letter-spacing:.26em;margin:0}
@@ -150,6 +174,7 @@ a.btn{text-decoration:none;display:inline-block}
 #shot{position:absolute;inset:0;z-index:9;background:#080809;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:calc(20px + var(--st)) 20px calc(20px + var(--sb))}
 #shot.open{display:flex}
 #shotBox{max-height:68%;display:flex}
+#shot img{-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
 #shot img,#shot video{max-width:100%;max-height:100%;border:1px solid var(--line)}
 #shotHelp{margin:0;font-size:12px;color:var(--dim);text-align:center;min-height:1.6em}
 #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:8}
@@ -176,6 +201,7 @@ a.btn{text-decoration:none;display:inline-block}
 <footer id="dock">
   <div id="title"><div id="tOver"></div><div id="tName"></div><div id="tDesc"></div></div>
   <p id="note"></p>
+  <div id="retry"><button class="btn jp solid hide" id="bCamRetry">カメラを使う</button></div>
   <nav id="cats" aria-label="フォルダ"></nav>
   <div id="strip" role="listbox" aria-label="プリセット"></div>
   <div id="bar">
@@ -211,7 +237,7 @@ a.btn{text-decoration:none;display:inline-block}
       <div class="rowb"><button class="btn jp" id="bBeat" aria-pressed="true">オートビート</button><button class="btn jp" id="bMic" aria-pressed="false">マイク</button></div>
       <p id="micState">♪ の付いたプリセットは音に反応します。</p></div>
     <div class="sec"><h3>Quality</h3>
-      <select id="quality" aria-label="短辺の解像度"><option value="360">360p（軽い）</option><option value="540">540p</option><option value="720">720p</option><option value="1080">1080p（重い）</option></select></div>
+      <select id="quality" aria-label="短辺の解像度"><option value="auto">自動（おすすめ）</option><option value="360">360p（軽い）</option><option value="540">540p</option><option value="720">720p</option><option value="1080">1080p（重い）</option></select></div>
     <div class="sec" id="secApp"><h3>App</h3>
       <div class="rowb"><button class="btn jp hide" id="bInstall">アプリとしてインストール</button></div>
       <p id="appHelp">iPhone は Safari の共有メニューから「ホーム画面に追加」、Android と PC の Chrome はメニューの「インストール」で、アプリとして使えます。</p></div>
