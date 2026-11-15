@@ -46,9 +46,10 @@ void main(){ vec3 n; vec2 q=(vUV-.5)*vec2(uAspect,1.);
   edge: `uniform float uStrength,uBlack,uComp,uOff,uSel; uniform vec3 uCol; float L(vec2 d){ vec3 c=texture(A,vUV+d/uRes).rgb; return uSel>.5?max(c.r,max(c.g,c.b)):lum(c); }
 void main(){ float gx=L(vec2(uOff,0.))-L(vec2(-uOff,0.)), gy=L(vec2(0.,uOff))-L(vec2(0.,-uOff)); float e=length(vec2(gx,gy))*uStrength*2.;
   e=clamp((e-uBlack)/max(1.-uBlack,1e-4),0.,1.); vec4 c=texture(A,vUV); vec4 k=vec4(uCol*e,e); o=uComp>.5?k+c*(1.-e):k; }`,
-  thresh: `uniform float uTh,uSoft,uCmp,uMax,uA1; void main(){ vec3 c=texture(A,vUV).rgb; float v=uMax>.5?max(c.r,max(c.g,c.b)):lum(c), m;
-  if(uCmp<.5) m=smoothstep(uTh-uSoft*.5-1e-4,uTh+uSoft*.5+1e-4,v); else if(uCmp<1.5) m=1.-m_(v); else if(uCmp<2.5) m=1.-clamp(abs(v-uTh)/max(uSoft,.02),0.,1.); else m=clamp(abs(v-uTh)/max(uSoft,.02),0.,1.);
-  o=vec4(m,m,m,uA1>.5?1.:m); }`.replace('m_(v)', 'smoothstep(uTh-uSoft*.5-1e-4,uTh+uSoft*.5+1e-4,v)'),
+  thresh: `uniform float uTh,uSoft,uCmp,uMax,uA1; void main(){ vec4 c4=texture(A,vUV); vec3 c=c4.rgb;
+  float v=uMax>6.5?max(c.r,max(c.g,c.b)):uMax>5.5?(c.r+c.g+c.b+c4.a)/4.:uMax>4.5?(c.r+c.g+c.b)/3.:uMax>3.5?c4.a:uMax>2.5?c.b:uMax>1.5?c.g:uMax>.5?c.r:lum(c), m;
+  if(uCmp<.5) m=M_(v); else if(uCmp<1.5) m=1.-m_(v); else if(uCmp<2.5) m=1.-clamp(abs(v-uTh)/max(uSoft,.02),0.,1.); else m=clamp(abs(v-uTh)/max(uSoft,.02),0.,1.);
+  o=vec4(m,m,m,uA1>.5?1.:m); }`.replace('M_(v)', '(uSoft>1e-5?smoothstep(uTh-uSoft*.5,uTh+uSoft*.5,v):step(uTh-.002,v))').replace('m_(v)', '(uSoft>1e-5?smoothstep(uTh-uSoft*.5,uTh+uSoft*.5,v):step(uTh-.002,v))'),
   rgbkey: `uniform vec3 uMin,uMax; void main(){ vec4 c=texture(A,vUV); vec3 u=c.a>1e-4?c.rgb/c.a:c.rgb; float k=(all(greaterThanEqual(u,uMin-1e-4))&&all(lessThanEqual(u,uMax+1e-4)))?1.:0.; o=c*k; }`,
   transform: `uniform vec2 uT,uS; uniform float uR,uAsp,uHold; uniform vec4 uBg;
 void main(){ vec2 p=vUV-.5-uT; p.x*=uAsp; float c=cos(-uR),s=sin(-uR); p=mat2(c,-s,s,c)*p; p.x/=uAsp; p/=uS; vec2 uv=p+.5;
@@ -61,6 +62,26 @@ void main(){ vec2 p=vUV-.5-uT; p.x*=uAsp; float c=cos(-uR),s=sin(-uR); p=mat2(c,
   constant: `uniform vec4 uCol; uniform float uHasIn; void main(){ o=uHasIn>.5?uCol+texture(A,vUV)*(1.-uCol.a):uCol; }`,
   circle: `uniform float uRad,uSoft,uAsp; void main(){ vec2 p=(vUV-.5)*vec2(uAsp,1.); float r=uRad*uAsp, d=length(p); float e=1.-smoothstep(r*(1.-uSoft)-1e-4,r+1e-4,d); o=vec4(e); }`,
   ramp: `void main(){ o=vec4(vec3(vUV.x),1.); }`,
+  /* Ramp TOP with colour keys (A = 256x1 key texture) */
+  rampk: `uniform float uType,uPhase,uPeriod,uAsp; void main(){ vec2 q=vUV-.5; float t=uType<.5?vUV.x:uType<1.5?vUV.y:uType<2.5?length(q*vec2(uAsp,1.))*2.:fract(atan(q.y,q.x)/6.2831853+.5);
+  t=(t-uPhase)/max(uPeriod,1e-4); o=texture(A,vec2(clamp(t,0.,1.),.5)); }`,
+  /* Luma Level TOP: InColor * Lookup(Source) / Source — the level curve is applied to the luminance, hue and saturation are kept */
+  lumalevel: `uniform float uInvert,uBlack,uB1,uG1,uCon,uInLo,uInHi,uOutLo,uOutHi,uOpacity,uB2,uG2; uniform int uSrc;
+float cv(float x){ x=mix(x,1.-x,uInvert); x=max(x-uBlack,0.)/max(1.-uBlack,1e-4); x*=uB1; x=pow(max(x,0.),1./max(uG1,1e-3)); x=(x-.5)*uCon+.5;
+  x=(x-uInLo)/max(uInHi-uInLo,1e-4)*(uOutHi-uOutLo)+uOutLo; x*=uB2; return pow(max(x,0.),1./max(uG2,1e-3)); }
+void main(){ vec4 c=texture(A,vUV); float s=uSrc==1?c.r:uSrc==2?c.g:uSrc==3?c.b:uSrc==4?c.a:uSrc==5?(c.r+c.g+c.b)/3.:uSrc==6?(c.r+c.g+c.b+c.a)/4.:lum(c.rgb);
+  float L=cv(s); vec3 x=mix(vec3(L),c.rgb*(L/max(s,1e-4)),smoothstep(0.,.02,s)); o=vec4(x,c.a)*uOpacity; }`,
+  /* Lookup TOP: the table is the line Dark UV -> Light UV in the 2nd input; RGBA Independent looks each channel up separately */
+  lookup: `uniform vec2 uIdx,uDark,uLight; uniform int uCh; uniform float uIA;
+vec4 lk(float v){ float t=clamp((v-uIdx.x)/max(uIdx.y-uIdx.x,1e-5),0.,1.); return texture(B,mix(uDark,uLight,t)); }
+void main(){ vec4 c=texture(A,vUV); if(uCh==9){ o=vec4(lk(c.r).r,lk(c.g).g,lk(c.b).b,lk(c.a).a); return; }
+  float v=uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:uCh==7?max(c.r,max(c.g,c.b)):uCh==8?max(max(c.r,c.g),max(c.b,c.a)):lum(c.rgb);
+  o=lk(v); if(uIA>.5) o.a=lk(c.a).a; }`,
+  /* Matte TOP: input 1 over input 2 through one channel of input 3 */
+  matte: `uniform int uCh; void main(){ vec4 a=texture(A,vUV), b=texture(B,vUV), k=texture(C,vUV);
+  float m=uCh==0?lum(k.rgb):uCh==1?k.r:uCh==2?k.g:uCh==3?k.b:uCh==5?(k.r+k.g+k.b)/3.:uCh==6?(k.r+k.g+k.b+k.a)/4.:k.a; o=mix(b,a,clamp(m,0.,1.)); }`,
+  /* palette Pixelate: the image is resized down with nearest sampling and back up */
+  pixcell: `uniform vec2 uCell; uniform float uMix; void main(){ vec2 n=max(vec2(1.),floor(uRes/uCell+.5)); o=mix(texture(A,vUV),texture(A,(floor(vUV*n)+.5)/n),uMix); }`,
   reorder: `uniform ivec4 uSrc,uCh; float pick(int i,int ch){ vec4 c=i==0?texture(A,vUV):i==1?texture(B,vUV):i==2?texture(C,vUV):texture(D,vUV);
   if(ch==0) return c.r; if(ch==1) return c.g; if(ch==2) return c.b; if(ch==3) return c.a; if(ch==4) return 0.; if(ch==5) return 1.; return lum(c.rgb); }
 void main(){ o=vec4(pick(uSrc.x,uCh.x),pick(uSrc.y,uCh.y),pick(uSrc.z,uCh.z),pick(uSrc.w,uCh.w)); }`,
@@ -120,7 +141,7 @@ void main(){ gl_Position=uPV*vec4(aI.xy+aP*aI.z*uScale,0.,1.); vL=1.; }`;
 const vnoise = (x, y) => { const h = (i, j) => { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); }, xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
   return (h(xi, yi) * (1 - u) + h(xi + 1, yi) * u) * (1 - v) + (h(xi, yi + 1) * (1 - u) + h(xi + 1, yi + 1) * u) * v; };
 const COMP_OPS = { multiply: 0, add: 1, over: 2, maximum: 3, minimum: 4, average: 5, negate: 6, burncolor: 7, screen: 8, difference: 9, subtract: 10, under: 11, inside: 12, dodgecolor: 13, darkercolor: 14, dimmest: 14, lightercolor: 15, brightest: 15, color: 16, softlight: 17, overlay: 18 };
-const MACROS = { Bloom: 'mBloom', RadialBlur: 'mRadial', Solarize: 'mSolar', RGBADelay: 'mRgbDelay', LightTunnel: 'mTunnel' };
+const MACROS = { Bloom: 'mBloom', RadialBlur: 'mRadial', Solarize: 'mSolar', RGBADelay: 'mRgbDelay', LightTunnel: 'mTunnel', Pixelate: 'mPixelate' };
 const EXPR_FN = { sin: Math.sin, cos: Math.cos, abs: Math.abs, floor: Math.floor, min: Math.min, max: Math.max, pow: Math.pow, sqrt: Math.sqrt, fract: x => x - Math.floor(x),
   step: (e, x) => x < e ? 0 : 1, mix: (a, b, t) => a + (b - a) * t, clamp: (x, a, b) => Math.min(b, Math.max(a, x)) };
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
@@ -346,6 +367,9 @@ class Engine {
     return this.draw('addmix', this.tgt(path, A.w, A.h), { A, B: g, uA: P('Inputlevel', 1), uB: P('Bloom', .392) * 4 + P('Glow', .4), uTint: [1, 1, 1] }); }
   mRadial(path) { const A = this.cin(path); return this.draw('radial', this.tgt(path, A.w, A.h), { A, uCenter: [this.P(path, 'Centerx', .5), this.P(path, 'Centery', .5)], uStr: this.P(path, 'Strength', .1), uMix: this.P(path, 'Drywet', 1) }); }
   mTunnel(path) { const A = this.cin(path); return this.draw('tunnel', this.tgt(path, A.w, A.h), { A, uRad: this.P(path, 'Radius', .3), uMix: this.P(path, 'Drywet', 1), uAsp: A.w / A.h, uC: [this.P(path, 'Center1', 0), this.P(path, 'Center2', 0)] }); }
+  /* palette Pixelate: resolution = input / pixel size (Horsize x Vertsize px at 720p, or Horsize for both with Square Pixels) */
+  mPixelate(path) { const A = this.cin(path), P = (k, d) => this.P(path, k, d), s = Math.min(this.w, this.h) / 720, hs = Math.max(1, P('Horsize', 10)), vs = P('Squarepixels', 0) > .5 ? hs : Math.max(1, P('Vertsize', 10));
+    return this.draw('pixcell', this.tgt(path, A.w, A.h), { A, uCell: [Math.max(1, hs * s), Math.max(1, vs * s)], uMix: Math.min(1, Math.max(0, P('Drywet', 1))) }); }
   mSolar(path) { const A = this.cin(path), P = (k, d) => this.P(path, k, d);
     return this.draw('solar', this.tgt(path, A.w, A.h), { A, uLT: P('Lightthreshold', .5), uLS: P('Lightsoft', .25), uDT: P('Darkthreshold', .3), uDS: P('Darksoft', .4), uMix: P('Drywet', 1) }); }
   mRgbDelay(path, N, st) { const A = this.cin(path), d = ['Reddelay', 'Greendelay', 'Bluedelay'].map((k, i) => Math.min(29, Math.abs(Math.round(this.P(path, k, [-15, -10, -5][i]))))), K = Math.max(...d) + 1;
@@ -396,7 +420,7 @@ Engine.prototype.OPS = (() => {
       uSel: this.S(p, 'select', 'luminance') === 'max' ? 1 : 0, uCol: [this.P(p, 'edgecolorr', 1), this.P(p, 'edgecolorg', 1), this.P(p, 'edgecolorb', 1)] }); },
     antialias: function (p) { const A = this.in(p, 0); if (this.S(p, 'outputedges', 'off') !== 'on') return A; return this.draw('edge', this.T(p, A), { A, uStrength: 3, uBlack: .08, uComp: 0, uOff: 1, uSel: 0, uCol: [1, 1, 1] }); },
     thresh: function (p) { const A = this.in(p, 0), c = { greater: 0, greaterorequal: 0, less: 1, lessorequal: 1, equal: 2, notequal: 3 }[this.S(p, 'comparator', 'greater')] ?? 0;
-      return this.draw('thresh', this.T(p, A), { A, uTh: this.P(p, 'threshold', .5), uSoft: this.P(p, 'soften', 0), uCmp: c, uMax: this.S(p, 'rgb', '') === 'rgbmax' ? 1 : 0, uA1: this.S(p, 'alpha', '') === 'one' ? 1 : 0 }); },
+      return this.draw('thresh', this.T(p, A), { A, uTh: this.P(p, 'threshold', .5), uSoft: this.P(p, 'soften', 0), uCmp: c, uMax: ({ luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6, rgbmax: 7 })[this.S(p, 'rgb', 'luminance')] ?? 0, uA1: this.S(p, 'alpha', '') === 'one' ? 1 : 0 }); },
     slope: function (p) { const A = this.in(p, 0), k = { neutral: 0, hluminance: 1, vluminance: 2 }, c = (n, d) => k[this.S(p, n, d)] ?? 0;
       return this.draw('slope', this.T(p, A), { A, uCh: { iv: [c('red', 'hluminance'), c('green', 'vluminance'), c('blue', 'neutral')] }, uStr: this.P(p, 'strength', 1) }); },
     rectangle: function (p, N) { const A = N.inputs[0] ? this.in(p, 0) : null; return this.draw('rect', this.T(p, A), { A: A || this.black, uSize: [Math.abs(this.P(p, 'sizex', .5)), Math.abs(this.P(p, 'sizey', .5))], uSoft: this.P(p, 'softness', 0), uHasIn: A ? 1 : 0 }); },
@@ -436,7 +460,28 @@ Engine.prototype.OPS = (() => {
       const A = N.inputs[0] ? this.in(p, 0) : null, a = this.P(p, 'alpha', 1);
       return this.draw('constant', this.T(p, A), { A: A || this.black, uCol: [this.P(p, 'colorr', 1) * a, this.P(p, 'colorg', 1) * a, this.P(p, 'colorb', 1) * a, a], uHasIn: A ? 1 : 0 }); },
     circle: function (p) { return this.draw('circle', this.T(p, null), { uRad: this.P(p, 'radiusx', .25), uSoft: this.P(p, 'softness', 0), uAsp: this.w / this.h }); },
-    ramp: function (p) { return this.draw('ramp', this.T(p, null), {}); },
+    ramp: function (p, N, st) { const gl = this.gl, ks = this.S(p, 'keys', ''), dn = this.S(p, 'dat', ''), t = this.T(p, null); let keys = null;
+      if (ks) { try { keys = JSON.parse(ks); } catch (e) { } } else if (dn) { const d = this.g.nodes[join(dirname(p), dn)]; if (d && d.table) keys = d.table.slice(1).map(r => r.map(Number)); }
+      keys = (keys || []).filter(r => r.length >= 5 && r.every(isFinite)); const ty = { horizontal: 0, vertical: 1, radial: 2, circular: 3 }[this.S(p, 'type', 'horizontal')] ?? 0;
+      if (!keys.length) keys = [[0, 0, 0, 0, 1], [1, 1, 1, 1, 1]];
+      const interp = this.S(p, 'interp', 'linear'), pre = this.S(p, 'multrgbbyalpha', 'on') !== 'off', sig = JSON.stringify(keys) + interp + pre;
+      if (st.sig !== sig) { const K = keys.map((k, i) => [k, i]).sort((a, b) => a[0][0] - b[0][0] || a[1] - b[1]).map(x => x[0]), n = 256, px = new Uint8Array(n * 4);
+        for (let i = 0; i < n; i++) { const u = i / (n - 1); let j = 0; while (j < K.length - 1 && K[j + 1][0] <= u) j++; const a = K[j], b = K[Math.min(K.length - 1, j + 1)];
+          let f = u <= a[0] || b[0] <= a[0] ? 0 : Math.min(1, (u - a[0]) / (b[0] - a[0])); if (interp === 'step') f = 0; else if (interp !== 'linear') f = f * f * (3 - 2 * f);
+          const al = a[4] + (b[4] - a[4]) * f; for (let c = 0; c < 3; c++) px[i * 4 + c] = Math.round(255 * Math.min(1, Math.max(0, (a[c + 1] + (b[c + 1] - a[c + 1]) * f) * (pre ? al : 1)))); px[i * 4 + 3] = Math.round(255 * Math.min(1, Math.max(0, al))); }
+        if (!st.tex) { st.tex = this.mkTex(n, 1, true); this.extra.push({ tex: st.tex }); } gl.bindTexture(gl.TEXTURE_2D, st.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, n, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, px); st.sig = sig; }
+      return this.draw('rampk', t, { A: { tex: st.tex }, uType: ty, uPhase: this.P(p, 'phase', 0), uPeriod: this.P(p, 'period', 1) || 1, uAsp: t.w / t.h }); },
+    lookup: function (p) { const A = this.in(p, 0), B = this.in(p, 1); if (!B) return A; const P = (k, d) => this.P(p, k, d);
+      const ch = { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6, rgbmax: 7, max: 8, independent: 9 }[this.S(p, 'channel', 'independent')] ?? 9;
+      return this.draw('lookup', this.T(p, A), { A, B, uIdx: [P('index1', 0), P('index2', 1)], uDark: [P('darkuv1', 0), P('darkuv2', .5)], uLight: [P('lightuv1', 1), P('lightuv2', .5)], uCh: { i: ch }, uIA: this.S(p, 'independentalpha', 'off') === 'on' ? 1 : 0 }); },
+    lumalevel: function (p) { const A = this.in(p, 0), P = (k, d) => this.P(p, k, d);
+      return this.draw('lumalevel', this.T(p, A), { A, uSrc: { i: { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 }[this.S(p, 'source', 'luminance')] ?? 0 }, uInvert: P('invert', 0), uBlack: P('blacklevel', 0), uB1: P('brightness1', 1), uG1: P('gamma1', 1), uCon: P('contrast', 1),
+        uInLo: P('inlow', 0), uInHi: P('inhigh', 1), uOutLo: P('outlow', 0), uOutHi: P('outhigh', 1), uOpacity: P('opacity', 1), uB2: P('brightness2', 1), uG2: P('gamma2', 1) }); },
+    /* same as the palette Pixelate component, as a single operator for original presets */
+    pixelate: function (p) { const A = this.in(p, 0), P = (k, d) => this.P(p, k, d), s = Math.min(this.w, this.h) / 720, hs = Math.max(1, P('horsize', 10)), vs = P('squarepixels', 0) > .5 ? hs : Math.max(1, P('vertsize', 10));
+      return this.draw('pixcell', this.T(p, A), { A, uCell: [Math.max(1, hs * s), Math.max(1, vs * s)], uMix: Math.min(1, Math.max(0, P('drywet', 1))) }); },
+    matte: function (p) { const A = this.in(p, 0), B = this.in(p, 1) || this.black, C = this.in(p, 2); if (!C) return A;
+      return this.draw('matte', this.T(p, A), { A, B, C, uCh: { i: { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 }[this.S(p, 'mattechannel', 'alpha')] ?? 4 } }); },
     reorder: function (p) { const I = [0, 1, 2, 3].map(k => this.in(p, k)), ch = { red: 0, green: 1, blue: 2, alpha: 3, zero: 4, one: 5, luminance: 6 }, nm = ['red', 'green', 'blue', 'alpha'];
       const src = nm.map(c => Math.max(0, parseInt(this.S(p, 'output' + c, 'input1').replace('input', '')) - 1)), cs = nm.map(c => ch[this.S(p, 'output' + c + 'chan', c)] ?? 0);
       return this.draw('reorder', this.T(p, I[0]), { A: I[0], B: I[1], C: I[2], D: I[3], uSrc: { iv: src }, uCh: { iv: cs } }); },

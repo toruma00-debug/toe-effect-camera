@@ -93,6 +93,12 @@ const TOE = (() => {
     }
     return out;
   }
+  /* .table of a Table DAT: "1\n*", then u32 version, rows, cols, 0, then per cell u32 type + u32 length + text (row-major) */
+  function table(u8) { let p = 0; while (p < u8.length && u8[p] !== 0x2a) p++; p++; if (p + 16 > u8.length) return null;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), td = new TextDecoder('utf-8'), rd = () => { const v = dv.getUint32(p); p += 4; return v; };
+    rd(); const rows = rd(), cols = rd(); rd(); if (rows > 4096 || cols > 256) return null; const out = [];
+    for (let r = 0; r < rows; r++) { const row = []; for (let c = 0; c < cols; c++) { if (p + 8 > u8.length) return out; rd(); const l = rd(); if (p + l > u8.length) return out; row.push(td.decode(u8.subarray(p, p + l))); p += l; } out.push(row); }
+    return out; }
   const SKIP = /(^|\/)(local|perform|docsHelper|annotation)(\/|$)|(^|\/)(light|cam|button|slider)\d*\/.|networkbox|comment\d/;
   /** expanded files -> graph {build, nodes{path:{fam,type,inputs,params,bypass,compinputs,cdef}}} */
   function parse(files) {
@@ -117,6 +123,7 @@ const TOE = (() => {
         for (let i = 0; i + 2 < ls.length + 1; i += 3) { const srcName = (ls[i] || '').split('\t').pop().trim().replace(/^"|"$/g, ''), inName = (ls[i + 1] || '').trim(); if (inName) n.compinputs[inName] = srcName || null; } } }
       const ct = text(path + '.cparm');
       if (ct) { n.cdef = {}; for (const l of ct.split('\n')) { const t = tokens(l); if (t.length > 12 && /^-?\d+$/.test(t[0]) && /^[A-Z]/.test(t[1])) n.cdef[t[1]] = (t[12] && isNaN(parseFloat(t[12])) && t[12] !== '') ? t[12] : t[11]; } }
+      if (n.fam === 'DAT' && files.has(path + '.table')) { const tb = table(files.get(path + '.table')); if (tb) n.table = tb; }
       g.nodes[path] = n;
     }
     return g;

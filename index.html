@@ -356,6 +356,12 @@ const TOE = (() => {
     }
     return out;
   }
+  /* .table of a Table DAT: "1\n*", then u32 version, rows, cols, 0, then per cell u32 type + u32 length + text (row-major) */
+  function table(u8) { let p = 0; while (p < u8.length && u8[p] !== 0x2a) p++; p++; if (p + 16 > u8.length) return null;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), td = new TextDecoder('utf-8'), rd = () => { const v = dv.getUint32(p); p += 4; return v; };
+    rd(); const rows = rd(), cols = rd(); rd(); if (rows > 4096 || cols > 256) return null; const out = [];
+    for (let r = 0; r < rows; r++) { const row = []; for (let c = 0; c < cols; c++) { if (p + 8 > u8.length) return out; rd(); const l = rd(); if (p + l > u8.length) return out; row.push(td.decode(u8.subarray(p, p + l))); p += l; } out.push(row); }
+    return out; }
   const SKIP = /(^|\/)(local|perform|docsHelper|annotation)(\/|$)|(^|\/)(light|cam|button|slider)\d*\/.|networkbox|comment\d/;
   /** expanded files -> graph {build, nodes{path:{fam,type,inputs,params,bypass,compinputs,cdef}}} */
   function parse(files) {
@@ -380,6 +386,7 @@ const TOE = (() => {
         for (let i = 0; i + 2 < ls.length + 1; i += 3) { const srcName = (ls[i] || '').split('\t').pop().trim().replace(/^"|"$/g, ''), inName = (ls[i + 1] || '').trim(); if (inName) n.compinputs[inName] = srcName || null; } } }
       const ct = text(path + '.cparm');
       if (ct) { n.cdef = {}; for (const l of ct.split('\n')) { const t = tokens(l); if (t.length > 12 && /^-?\d+$/.test(t[0]) && /^[A-Z]/.test(t[1])) n.cdef[t[1]] = (t[12] && isNaN(parseFloat(t[12])) && t[12] !== '') ? t[12] : t[11]; } }
+      if (n.fam === 'DAT' && files.has(path + '.table')) { const tb = table(files.get(path + '.table')); if (tb) n.table = tb; }
       g.nodes[path] = n;
     }
     return g;
@@ -435,9 +442,10 @@ void main(){ vec3 n; vec2 q=(vUV-.5)*vec2(uAspect,1.);
   edge: `uniform float uStrength,uBlack,uComp,uOff,uSel; uniform vec3 uCol; float L(vec2 d){ vec3 c=texture(A,vUV+d/uRes).rgb; return uSel>.5?max(c.r,max(c.g,c.b)):lum(c); }
 void main(){ float gx=L(vec2(uOff,0.))-L(vec2(-uOff,0.)), gy=L(vec2(0.,uOff))-L(vec2(0.,-uOff)); float e=length(vec2(gx,gy))*uStrength*2.;
   e=clamp((e-uBlack)/max(1.-uBlack,1e-4),0.,1.); vec4 c=texture(A,vUV); vec4 k=vec4(uCol*e,e); o=uComp>.5?k+c*(1.-e):k; }`,
-  thresh: `uniform float uTh,uSoft,uCmp,uMax,uA1; void main(){ vec3 c=texture(A,vUV).rgb; float v=uMax>.5?max(c.r,max(c.g,c.b)):lum(c), m;
-  if(uCmp<.5) m=smoothstep(uTh-uSoft*.5-1e-4,uTh+uSoft*.5+1e-4,v); else if(uCmp<1.5) m=1.-m_(v); else if(uCmp<2.5) m=1.-clamp(abs(v-uTh)/max(uSoft,.02),0.,1.); else m=clamp(abs(v-uTh)/max(uSoft,.02),0.,1.);
-  o=vec4(m,m,m,uA1>.5?1.:m); }`.replace('m_(v)', 'smoothstep(uTh-uSoft*.5-1e-4,uTh+uSoft*.5+1e-4,v)'),
+  thresh: `uniform float uTh,uSoft,uCmp,uMax,uA1; void main(){ vec4 c4=texture(A,vUV); vec3 c=c4.rgb;
+  float v=uMax>6.5?max(c.r,max(c.g,c.b)):uMax>5.5?(c.r+c.g+c.b+c4.a)/4.:uMax>4.5?(c.r+c.g+c.b)/3.:uMax>3.5?c4.a:uMax>2.5?c.b:uMax>1.5?c.g:uMax>.5?c.r:lum(c), m;
+  if(uCmp<.5) m=M_(v); else if(uCmp<1.5) m=1.-m_(v); else if(uCmp<2.5) m=1.-clamp(abs(v-uTh)/max(uSoft,.02),0.,1.); else m=clamp(abs(v-uTh)/max(uSoft,.02),0.,1.);
+  o=vec4(m,m,m,uA1>.5?1.:m); }`.replace('M_(v)', '(uSoft>1e-5?smoothstep(uTh-uSoft*.5,uTh+uSoft*.5,v):step(uTh-.002,v))').replace('m_(v)', '(uSoft>1e-5?smoothstep(uTh-uSoft*.5,uTh+uSoft*.5,v):step(uTh-.002,v))'),
   rgbkey: `uniform vec3 uMin,uMax; void main(){ vec4 c=texture(A,vUV); vec3 u=c.a>1e-4?c.rgb/c.a:c.rgb; float k=(all(greaterThanEqual(u,uMin-1e-4))&&all(lessThanEqual(u,uMax+1e-4)))?1.:0.; o=c*k; }`,
   transform: `uniform vec2 uT,uS; uniform float uR,uAsp,uHold; uniform vec4 uBg;
 void main(){ vec2 p=vUV-.5-uT; p.x*=uAsp; float c=cos(-uR),s=sin(-uR); p=mat2(c,-s,s,c)*p; p.x/=uAsp; p/=uS; vec2 uv=p+.5;
@@ -450,6 +458,26 @@ void main(){ vec2 p=vUV-.5-uT; p.x*=uAsp; float c=cos(-uR),s=sin(-uR); p=mat2(c,
   constant: `uniform vec4 uCol; uniform float uHasIn; void main(){ o=uHasIn>.5?uCol+texture(A,vUV)*(1.-uCol.a):uCol; }`,
   circle: `uniform float uRad,uSoft,uAsp; void main(){ vec2 p=(vUV-.5)*vec2(uAsp,1.); float r=uRad*uAsp, d=length(p); float e=1.-smoothstep(r*(1.-uSoft)-1e-4,r+1e-4,d); o=vec4(e); }`,
   ramp: `void main(){ o=vec4(vec3(vUV.x),1.); }`,
+  /* Ramp TOP with colour keys (A = 256x1 key texture) */
+  rampk: `uniform float uType,uPhase,uPeriod,uAsp; void main(){ vec2 q=vUV-.5; float t=uType<.5?vUV.x:uType<1.5?vUV.y:uType<2.5?length(q*vec2(uAsp,1.))*2.:fract(atan(q.y,q.x)/6.2831853+.5);
+  t=(t-uPhase)/max(uPeriod,1e-4); o=texture(A,vec2(clamp(t,0.,1.),.5)); }`,
+  /* Luma Level TOP: InColor * Lookup(Source) / Source — the level curve is applied to the luminance, hue and saturation are kept */
+  lumalevel: `uniform float uInvert,uBlack,uB1,uG1,uCon,uInLo,uInHi,uOutLo,uOutHi,uOpacity,uB2,uG2; uniform int uSrc;
+float cv(float x){ x=mix(x,1.-x,uInvert); x=max(x-uBlack,0.)/max(1.-uBlack,1e-4); x*=uB1; x=pow(max(x,0.),1./max(uG1,1e-3)); x=(x-.5)*uCon+.5;
+  x=(x-uInLo)/max(uInHi-uInLo,1e-4)*(uOutHi-uOutLo)+uOutLo; x*=uB2; return pow(max(x,0.),1./max(uG2,1e-3)); }
+void main(){ vec4 c=texture(A,vUV); float s=uSrc==1?c.r:uSrc==2?c.g:uSrc==3?c.b:uSrc==4?c.a:uSrc==5?(c.r+c.g+c.b)/3.:uSrc==6?(c.r+c.g+c.b+c.a)/4.:lum(c.rgb);
+  float L=cv(s); vec3 x=mix(vec3(L),c.rgb*(L/max(s,1e-4)),smoothstep(0.,.02,s)); o=vec4(x,c.a)*uOpacity; }`,
+  /* Lookup TOP: the table is the line Dark UV -> Light UV in the 2nd input; RGBA Independent looks each channel up separately */
+  lookup: `uniform vec2 uIdx,uDark,uLight; uniform int uCh; uniform float uIA;
+vec4 lk(float v){ float t=clamp((v-uIdx.x)/max(uIdx.y-uIdx.x,1e-5),0.,1.); return texture(B,mix(uDark,uLight,t)); }
+void main(){ vec4 c=texture(A,vUV); if(uCh==9){ o=vec4(lk(c.r).r,lk(c.g).g,lk(c.b).b,lk(c.a).a); return; }
+  float v=uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:uCh==7?max(c.r,max(c.g,c.b)):uCh==8?max(max(c.r,c.g),max(c.b,c.a)):lum(c.rgb);
+  o=lk(v); if(uIA>.5) o.a=lk(c.a).a; }`,
+  /* Matte TOP: input 1 over input 2 through one channel of input 3 */
+  matte: `uniform int uCh; void main(){ vec4 a=texture(A,vUV), b=texture(B,vUV), k=texture(C,vUV);
+  float m=uCh==0?lum(k.rgb):uCh==1?k.r:uCh==2?k.g:uCh==3?k.b:uCh==5?(k.r+k.g+k.b)/3.:uCh==6?(k.r+k.g+k.b+k.a)/4.:k.a; o=mix(b,a,clamp(m,0.,1.)); }`,
+  /* palette Pixelate: the image is resized down with nearest sampling and back up */
+  pixcell: `uniform vec2 uCell; uniform float uMix; void main(){ vec2 n=max(vec2(1.),floor(uRes/uCell+.5)); o=mix(texture(A,vUV),texture(A,(floor(vUV*n)+.5)/n),uMix); }`,
   reorder: `uniform ivec4 uSrc,uCh; float pick(int i,int ch){ vec4 c=i==0?texture(A,vUV):i==1?texture(B,vUV):i==2?texture(C,vUV):texture(D,vUV);
   if(ch==0) return c.r; if(ch==1) return c.g; if(ch==2) return c.b; if(ch==3) return c.a; if(ch==4) return 0.; if(ch==5) return 1.; return lum(c.rgb); }
 void main(){ o=vec4(pick(uSrc.x,uCh.x),pick(uSrc.y,uCh.y),pick(uSrc.z,uCh.z),pick(uSrc.w,uCh.w)); }`,
@@ -509,7 +537,7 @@ void main(){ gl_Position=uPV*vec4(aI.xy+aP*aI.z*uScale,0.,1.); vL=1.; }`;
 const vnoise = (x, y) => { const h = (i, j) => { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); }, xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
   return (h(xi, yi) * (1 - u) + h(xi + 1, yi) * u) * (1 - v) + (h(xi, yi + 1) * (1 - u) + h(xi + 1, yi + 1) * u) * v; };
 const COMP_OPS = { multiply: 0, add: 1, over: 2, maximum: 3, minimum: 4, average: 5, negate: 6, burncolor: 7, screen: 8, difference: 9, subtract: 10, under: 11, inside: 12, dodgecolor: 13, darkercolor: 14, dimmest: 14, lightercolor: 15, brightest: 15, color: 16, softlight: 17, overlay: 18 };
-const MACROS = { Bloom: 'mBloom', RadialBlur: 'mRadial', Solarize: 'mSolar', RGBADelay: 'mRgbDelay', LightTunnel: 'mTunnel' };
+const MACROS = { Bloom: 'mBloom', RadialBlur: 'mRadial', Solarize: 'mSolar', RGBADelay: 'mRgbDelay', LightTunnel: 'mTunnel', Pixelate: 'mPixelate' };
 const EXPR_FN = { sin: Math.sin, cos: Math.cos, abs: Math.abs, floor: Math.floor, min: Math.min, max: Math.max, pow: Math.pow, sqrt: Math.sqrt, fract: x => x - Math.floor(x),
   step: (e, x) => x < e ? 0 : 1, mix: (a, b, t) => a + (b - a) * t, clamp: (x, a, b) => Math.min(b, Math.max(a, x)) };
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
@@ -735,6 +763,9 @@ class Engine {
     return this.draw('addmix', this.tgt(path, A.w, A.h), { A, B: g, uA: P('Inputlevel', 1), uB: P('Bloom', .392) * 4 + P('Glow', .4), uTint: [1, 1, 1] }); }
   mRadial(path) { const A = this.cin(path); return this.draw('radial', this.tgt(path, A.w, A.h), { A, uCenter: [this.P(path, 'Centerx', .5), this.P(path, 'Centery', .5)], uStr: this.P(path, 'Strength', .1), uMix: this.P(path, 'Drywet', 1) }); }
   mTunnel(path) { const A = this.cin(path); return this.draw('tunnel', this.tgt(path, A.w, A.h), { A, uRad: this.P(path, 'Radius', .3), uMix: this.P(path, 'Drywet', 1), uAsp: A.w / A.h, uC: [this.P(path, 'Center1', 0), this.P(path, 'Center2', 0)] }); }
+  /* palette Pixelate: resolution = input / pixel size (Horsize x Vertsize px at 720p, or Horsize for both with Square Pixels) */
+  mPixelate(path) { const A = this.cin(path), P = (k, d) => this.P(path, k, d), s = Math.min(this.w, this.h) / 720, hs = Math.max(1, P('Horsize', 10)), vs = P('Squarepixels', 0) > .5 ? hs : Math.max(1, P('Vertsize', 10));
+    return this.draw('pixcell', this.tgt(path, A.w, A.h), { A, uCell: [Math.max(1, hs * s), Math.max(1, vs * s)], uMix: Math.min(1, Math.max(0, P('Drywet', 1))) }); }
   mSolar(path) { const A = this.cin(path), P = (k, d) => this.P(path, k, d);
     return this.draw('solar', this.tgt(path, A.w, A.h), { A, uLT: P('Lightthreshold', .5), uLS: P('Lightsoft', .25), uDT: P('Darkthreshold', .3), uDS: P('Darksoft', .4), uMix: P('Drywet', 1) }); }
   mRgbDelay(path, N, st) { const A = this.cin(path), d = ['Reddelay', 'Greendelay', 'Bluedelay'].map((k, i) => Math.min(29, Math.abs(Math.round(this.P(path, k, [-15, -10, -5][i]))))), K = Math.max(...d) + 1;
@@ -785,7 +816,7 @@ Engine.prototype.OPS = (() => {
       uSel: this.S(p, 'select', 'luminance') === 'max' ? 1 : 0, uCol: [this.P(p, 'edgecolorr', 1), this.P(p, 'edgecolorg', 1), this.P(p, 'edgecolorb', 1)] }); },
     antialias: function (p) { const A = this.in(p, 0); if (this.S(p, 'outputedges', 'off') !== 'on') return A; return this.draw('edge', this.T(p, A), { A, uStrength: 3, uBlack: .08, uComp: 0, uOff: 1, uSel: 0, uCol: [1, 1, 1] }); },
     thresh: function (p) { const A = this.in(p, 0), c = { greater: 0, greaterorequal: 0, less: 1, lessorequal: 1, equal: 2, notequal: 3 }[this.S(p, 'comparator', 'greater')] ?? 0;
-      return this.draw('thresh', this.T(p, A), { A, uTh: this.P(p, 'threshold', .5), uSoft: this.P(p, 'soften', 0), uCmp: c, uMax: this.S(p, 'rgb', '') === 'rgbmax' ? 1 : 0, uA1: this.S(p, 'alpha', '') === 'one' ? 1 : 0 }); },
+      return this.draw('thresh', this.T(p, A), { A, uTh: this.P(p, 'threshold', .5), uSoft: this.P(p, 'soften', 0), uCmp: c, uMax: ({ luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6, rgbmax: 7 })[this.S(p, 'rgb', 'luminance')] ?? 0, uA1: this.S(p, 'alpha', '') === 'one' ? 1 : 0 }); },
     slope: function (p) { const A = this.in(p, 0), k = { neutral: 0, hluminance: 1, vluminance: 2 }, c = (n, d) => k[this.S(p, n, d)] ?? 0;
       return this.draw('slope', this.T(p, A), { A, uCh: { iv: [c('red', 'hluminance'), c('green', 'vluminance'), c('blue', 'neutral')] }, uStr: this.P(p, 'strength', 1) }); },
     rectangle: function (p, N) { const A = N.inputs[0] ? this.in(p, 0) : null; return this.draw('rect', this.T(p, A), { A: A || this.black, uSize: [Math.abs(this.P(p, 'sizex', .5)), Math.abs(this.P(p, 'sizey', .5))], uSoft: this.P(p, 'softness', 0), uHasIn: A ? 1 : 0 }); },
@@ -825,7 +856,28 @@ Engine.prototype.OPS = (() => {
       const A = N.inputs[0] ? this.in(p, 0) : null, a = this.P(p, 'alpha', 1);
       return this.draw('constant', this.T(p, A), { A: A || this.black, uCol: [this.P(p, 'colorr', 1) * a, this.P(p, 'colorg', 1) * a, this.P(p, 'colorb', 1) * a, a], uHasIn: A ? 1 : 0 }); },
     circle: function (p) { return this.draw('circle', this.T(p, null), { uRad: this.P(p, 'radiusx', .25), uSoft: this.P(p, 'softness', 0), uAsp: this.w / this.h }); },
-    ramp: function (p) { return this.draw('ramp', this.T(p, null), {}); },
+    ramp: function (p, N, st) { const gl = this.gl, ks = this.S(p, 'keys', ''), dn = this.S(p, 'dat', ''), t = this.T(p, null); let keys = null;
+      if (ks) { try { keys = JSON.parse(ks); } catch (e) { } } else if (dn) { const d = this.g.nodes[join(dirname(p), dn)]; if (d && d.table) keys = d.table.slice(1).map(r => r.map(Number)); }
+      keys = (keys || []).filter(r => r.length >= 5 && r.every(isFinite)); const ty = { horizontal: 0, vertical: 1, radial: 2, circular: 3 }[this.S(p, 'type', 'horizontal')] ?? 0;
+      if (!keys.length) keys = [[0, 0, 0, 0, 1], [1, 1, 1, 1, 1]];
+      const interp = this.S(p, 'interp', 'linear'), pre = this.S(p, 'multrgbbyalpha', 'on') !== 'off', sig = JSON.stringify(keys) + interp + pre;
+      if (st.sig !== sig) { const K = keys.map((k, i) => [k, i]).sort((a, b) => a[0][0] - b[0][0] || a[1] - b[1]).map(x => x[0]), n = 256, px = new Uint8Array(n * 4);
+        for (let i = 0; i < n; i++) { const u = i / (n - 1); let j = 0; while (j < K.length - 1 && K[j + 1][0] <= u) j++; const a = K[j], b = K[Math.min(K.length - 1, j + 1)];
+          let f = u <= a[0] || b[0] <= a[0] ? 0 : Math.min(1, (u - a[0]) / (b[0] - a[0])); if (interp === 'step') f = 0; else if (interp !== 'linear') f = f * f * (3 - 2 * f);
+          const al = a[4] + (b[4] - a[4]) * f; for (let c = 0; c < 3; c++) px[i * 4 + c] = Math.round(255 * Math.min(1, Math.max(0, (a[c + 1] + (b[c + 1] - a[c + 1]) * f) * (pre ? al : 1)))); px[i * 4 + 3] = Math.round(255 * Math.min(1, Math.max(0, al))); }
+        if (!st.tex) { st.tex = this.mkTex(n, 1, true); this.extra.push({ tex: st.tex }); } gl.bindTexture(gl.TEXTURE_2D, st.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, n, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, px); st.sig = sig; }
+      return this.draw('rampk', t, { A: { tex: st.tex }, uType: ty, uPhase: this.P(p, 'phase', 0), uPeriod: this.P(p, 'period', 1) || 1, uAsp: t.w / t.h }); },
+    lookup: function (p) { const A = this.in(p, 0), B = this.in(p, 1); if (!B) return A; const P = (k, d) => this.P(p, k, d);
+      const ch = { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6, rgbmax: 7, max: 8, independent: 9 }[this.S(p, 'channel', 'independent')] ?? 9;
+      return this.draw('lookup', this.T(p, A), { A, B, uIdx: [P('index1', 0), P('index2', 1)], uDark: [P('darkuv1', 0), P('darkuv2', .5)], uLight: [P('lightuv1', 1), P('lightuv2', .5)], uCh: { i: ch }, uIA: this.S(p, 'independentalpha', 'off') === 'on' ? 1 : 0 }); },
+    lumalevel: function (p) { const A = this.in(p, 0), P = (k, d) => this.P(p, k, d);
+      return this.draw('lumalevel', this.T(p, A), { A, uSrc: { i: { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 }[this.S(p, 'source', 'luminance')] ?? 0 }, uInvert: P('invert', 0), uBlack: P('blacklevel', 0), uB1: P('brightness1', 1), uG1: P('gamma1', 1), uCon: P('contrast', 1),
+        uInLo: P('inlow', 0), uInHi: P('inhigh', 1), uOutLo: P('outlow', 0), uOutHi: P('outhigh', 1), uOpacity: P('opacity', 1), uB2: P('brightness2', 1), uG2: P('gamma2', 1) }); },
+    /* same as the palette Pixelate component, as a single operator for original presets */
+    pixelate: function (p) { const A = this.in(p, 0), P = (k, d) => this.P(p, k, d), s = Math.min(this.w, this.h) / 720, hs = Math.max(1, P('horsize', 10)), vs = P('squarepixels', 0) > .5 ? hs : Math.max(1, P('vertsize', 10));
+      return this.draw('pixcell', this.T(p, A), { A, uCell: [Math.max(1, hs * s), Math.max(1, vs * s)], uMix: Math.min(1, Math.max(0, P('drywet', 1))) }); },
+    matte: function (p) { const A = this.in(p, 0), B = this.in(p, 1) || this.black, C = this.in(p, 2); if (!C) return A;
+      return this.draw('matte', this.T(p, A), { A, B, C, uCh: { i: { luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 }[this.S(p, 'mattechannel', 'alpha')] ?? 4 } }); },
     reorder: function (p) { const I = [0, 1, 2, 3].map(k => this.in(p, k)), ch = { red: 0, green: 1, blue: 2, alpha: 3, zero: 4, one: 5, luminance: 6 }, nm = ['red', 'green', 'blue', 'alpha'];
       const src = nm.map(c => Math.max(0, parseInt(this.S(p, 'output' + c, 'input1').replace('input', '')) - 1)), cs = nm.map(c => ch[this.S(p, 'output' + c + 'chan', c)] ?? 0);
       return this.draw('reorder', this.T(p, I[0]), { A: I[0], B: I[1], C: I[2], D: I[3], uSrc: { iv: src }, uCh: { iv: cs } }); },
@@ -1188,6 +1240,10 @@ class GraphBuilder {
   glow(x, par) { return this.top('glow', [x], par); }
   comp(op, ins, name) { return this.top('comp', ins, { operand: op }, name); }
   blend(a, b, mode, opacity, name) { return this.fx('blend', [a, b], { mode: { normal: 0, add: 1, screen: 2, multiply: 3, overlay: 4, lighten: 5, darken: 6, difference: 7, subtract: 8, ghost: 9 }[mode], opacity: opacity ?? 1 }, name); }
+  /** a parameter shown as a main slider in the Adjust sheet */
+  key(node, param, label, min, max, def) { (this.keys = this.keys || []).push({ node, param, label, min, max, def }); return this; }
+  /** Ramp TOP from colour keys [[pos, r, g, b, a], ...] */
+  ramp(keys, par) { return this.top('ramp', [], Object.assign({ keys: JSON.stringify(keys) }, par)); }
   /** last frame's output of the named node (a Feedback TOP) */
   fb(target, init) { return this.top('feedback', [init || this.cam], { top: target }); }
   prev(x) { return this.top('feedback', [x], { top: x }); }
@@ -1209,6 +1265,18 @@ const ORIGINALS = [];
 const def = (cat, name, desc, fn) => ORIGINALS.push({ cat, name, desc, fn });
 
 /* ───────── FILM ───────── */
+/* ---- systems ported from .toe files -------------------------------------------------------------------------
+   Film_Look_Color_Granding.toe : level -> threshold(soft) -> blur -> screen over the picture -> Bloom TOP -> Noise TOP used as grain.
+     out1 = colour look, out2 = the same summed with the picture then mono, out4 = red halation through a Lookup TOP + a ramp wash.
+   thermal_vision_effect.toe     : Luma Level (inverted) -> Feedback/Blur/Level loop composited Over itself -> Lookup TOP with a 5-key ramp
+     (RGBA independent) -> Noise -> Displace -> Overlay.
+   pixelate_effect.toe           : Edge -> palette Pixelate (4x2) used both as the picture and as the Time Machine map, shown through a
+     Matte TOP whose matte is a thresholded Noise TOP.
+   Parameter values are the ones stored in the files; the grain seed and the noise drift are animated here. */
+const filmGrain = (g, x, spread) => { const n = g.top('noise', [x], { seed: '=9999+floor(' + T + '*24)', period: 0, harmon: 1, spread, gain: 2, amp: .06, offset: 0 }); g.key(n, 'amp', 'Grain', 0, .25); return n; };
+/* the file lifts the picture x2 before the threshold, which suits dark footage; for a live camera the lift starts lower and is a slider */
+const filmBloom = (g, lift) => { const c = g.cam, pre = g.level(c, { brightness1: lift, gamma1: 1.1 }), hi = g.top('thresh', [pre], { rgb: 'rgbaverage', threshold: .7, soften: 1 }); g.key(pre, 'brightness1', 'Glow', .5, 2);
+  return g.top('bloom', [g.comp('screen', [g.top('blur', [hi], { preshrink: 8, size: 32 }), c])], { preblacklevel: .963 }); };
 def('FILM', 'Amber 400', '暖色ネガの色と粒子、淡いハレーション', g => { let x = g.fx('grade', g.cam, { temp: .28, tint: .05, contrast: 1.08, sat: 1.12, fade: .18, sh: '#7a8088', hi: '#8a8272' });
   x = g.glow(x, { threshold: .72, size: 26, intensity: .4, tint: '#ff8a4a' }); x = g.fx('grain', x, { amount: .13, size: 1.7 }); g.out(g.fx('vignette', x, { amount: .35 })); });
 def('FILM', 'Halation', 'ハイライトのまわりに赤くにじむ光', g => { let x = g.fx('grade', g.cam, { contrast: 1.15, sat: 1.05, fade: .08, temp: .06 });
@@ -1218,7 +1286,8 @@ def('FILM', 'Super 8', '揺れ・傷・フリッカーのある8mmフィルム',
   x = g.fx('grain', x, { amount: .22, size: 2.4, color: .3 }); g.out(g.fx('vignette', x, { amount: .8, radius: .78, soft: .25, round: .2 })); });
 def('FILM', 'Bleach Bypass', '銀残し。低彩度でコントラストの強い画', g => { let x = g.fx('grade', g.cam, { sat: .35, contrast: 1.5, gamma: .95, sh: '#7c8084', hi: '#84827c' }); x = g.fx('grain', x, { amount: .1 }); g.out(g.fx('vignette', x, { amount: .3 })); });
 def('FILM', 'Cross Process', 'クロスプロセスの色転び', g => { let x = g.fx('grade', g.cam, { contrast: 1.3, sat: 1.35, tint: -.25, gamma: 1.05, sh: '#5a8a78', hi: '#a09050' }); x = g.fx('vignette', x, { amount: .5, radius: .68 }); g.out(g.fx('grain', x, { amount: .1, color: .5 })); });
-def('FILM', 'Tri-X Push', '増感現像したモノクロ、荒い粒子', g => { let x = g.fx('grade', g.cam, { sat: 0, contrast: 1.55, gamma: .92 }); x = g.fx('grain', x, { amount: .22, size: 2.2, luma: .3, color: 0 }); g.out(g.fx('vignette', x, { amount: .4 })); });
+def('FILM', 'Tri-X Push', '増感現像したモノクロ。飛び気味のハイライトと粒子', g => { let x = g.top('add', [filmBloom(g, 1.1), g.level(g.cam, { opacity: .15 })]); x = g.top('mono', [filmGrain(g, x, 10.2)]);
+  x = g.level(x, { blacklevel: .1, contrast: 1.2 }); x = g.fx('grain', x, { amount: .14, size: 2.2, luma: .3, color: 0 }); g.out(g.fx('vignette', x, { amount: .35 })); });
 def('FILM', 'Aerochrome', '赤外カラーフィルム。緑が赤紫に転ぶ', g => { let x = g.fx('hueshift', g.cam, { from: .3, to: .93, width: .17, sat: 1.5 }); x = g.fx('grade', x, { contrast: 1.12, sat: 1.1, sh: '#78828c', hi: '#868078' }); g.out(g.fx('grain', x, { amount: .1 })); });
 def('FILM', 'Instant Fade', '褪せたインスタント写真', g => { let x = g.fx('grade', g.cam, { exposure: .3, fade: .5, contrast: .9, sat: .8, temp: .12, gamma: 1.1, sh: '#6c8490', hi: '#908a78' }); x = g.blur(x, 1.5);
   x = g.fx('vignette', x, { amount: .45, soft: .6 }); g.out(g.fx('grain', x, { amount: .08 })); });
@@ -1234,24 +1303,32 @@ def('FILM', 'Sepia Reel', 'セピアに焼けた古い映画フィルム', g => 
   x = g.fx('dust', x, { density: .9, scratch: .8, flicker: .22 }); x = g.fx('vignette', x, { amount: .6, radius: .72 }); g.out(g.fx('grain', x, { amount: .2, size: 2, color: 0 })); });
 def('FILM', 'Two-Strip', '赤とシアンだけで刷る2色法', g => { let x = g.fx('mixer', g.cam, { r: '#ff3018', g: '#18b0a0', b: '#085858' }); x = g.fx('grade', x, { contrast: 1.15, sat: 1.1, fade: .1 }); x = g.fx('grain', x, { amount: .12 }); g.out(g.fx('vignette', x, { amount: .4 })); });
 def('FILM', 'Cyanotype', '青一色の日光写真', g => { let x = g.fx('duotone', g.cam, { contrast: 1.15, c1: '#06223f', c2: '#2f6ea3', c3: '#eef4f6' }); x = g.fx('paper', x, { amount: .5 }); x = g.fx('dust', x, { density: .3, scratch: 0, flicker: 0 }); g.out(g.fx('vignette', x, { amount: .3 })); });
-def('FILM', 'Expired Roll', '期限切れフィルムの色かぶりとかぶり', g => { let x = g.fx('grade', g.cam, { fade: .4, contrast: .85, sat: .7, tint: .3, temp: -.05, sh: '#8a7088', hi: '#88907a' }); x = g.fx('leak', x, { amount: .4, c1: '#c0206a', c2: '#ff9a5a', edge: .8 });
-  x = g.fx('grain', x, { amount: .18, size: 2.6, color: .7 }); g.out(g.fx('vignette', x, { amount: .45 })); });
+def('FILM', 'Expired Roll', '期限切れフィルムの紫かぶりと、ハイライトの赤いにじみ', g => { const c = g.cam;
+  const hi = g.top('thresh', [g.level(c, { brightness1: 2, gamma1: 1.1 })], { rgb: 'rgbaverage', threshold: 1, soften: .244 });
+  const red = g.top('lookup', [hi, g.ramp([[0, 0, 0, 0, 1], [1, .862, 0, 0, 1]])], { index1: 0, index2: 8, lightuv1: 20, lightuv2: 19.5 });
+  const wash = g.level(g.ramp([[0, 0, 0, 0, 1], [.002538071, .681, .64695, 0, .874], [.002538071, .1500001, 0, 1, 1], [1, 1, 0, .9833331, .369]]), { invert: .145 }); g.key(wash, 'opacity', 'Cast', 0, 1, 1);
+  let x = g.comp('screen', [wash, g.comp('screen', [g.top('blur', [red], { size: 32 }), c])]); x = g.level(x, { brightness1: .86, gamma1: .88, contrast: .87 }); g.out(filmGrain(g, x, 10.1)); });
 def('FILM', 'Tungsten 800', '夜の青緑と、灯りの赤いハレーション', g => { let x = g.fx('grade', g.cam, { temp: -.35, tint: -.05, contrast: 1.15, sat: 1.1, sh: '#6a8088', hi: '#808890' }); x = g.glow(x, { threshold: .78, size: 34, intensity: .7, tint: '#ff2a1a' }); g.out(g.fx('grain', x, { amount: .16 })); });
 def('FILM', 'Anamorphic', '横に伸びる青いフレアとシネスコの帯', g => { const c = g.cam; let s = g.half(g.level(c, { blacklevel: .8, brightness1: 3 })); s = g.fx('dirblur', s, { len: .4, angle: 0, decay: 1.6, gain: 1.2 }); s = g.fx('tint', s, { c: '#3f9cff', gain: .8 });
   let x = g.fx('grade', c, { contrast: 1.12, sat: 1.1, sh: '#6e8690', hi: '#928670' }); x = g.blend(x, s, 'add'); x = g.fx('chroma', x, { amount: .004 }); x = g.fx('bars', x, { bars: .11 }); g.out(g.fx('grain', x, { amount: .07 })); });
-def('FILM', 'Pro Mist', 'ハイライトがやわらかく滲むディフュージョン', g => { let x = g.glow(g.cam, { threshold: .6, size: 40, intensity: .4 }); g.out(g.fx('grade', x, { contrast: .92, fade: .15, sat: 1.05 })); });
-
-/* ───────── GLITCH ───────── */
+def('FILM', 'Film Look', 'ハイライトのにじみとブルーム、細かい粒子のフィルムルック', g => g.out(filmGrain(g, filmBloom(g, 1.1), 10.4)));
 def('GLITCH', 'RGB Split', '音で開く色ずれ', g => { let x = g.fx('chroma', g.cam, { amount: '=' + g.bass(.006, .035), radial: 0, angle: '=' + T + '*40' }); g.out(g.fx('tear', x, { amount: .012, band: .03, speed: 6 })); });
 def('GLITCH', 'Datamosh', '動きだけが画を押し流すデータモッシュ', g => { const c = g.cam, lo = g.top('res', [g.blur(c, 6)], { outputresolution: 'quarter' }, 'lo'); const fl = g.blur(g.fx('flow', [lo, g.prev(lo)], { gain: 1.5 }), 4);
   g.fx('mosh', [g.fb('mosh1', c), fl, c], { carry: 2.2, refresh: .004, key: '=' + g.lfo(.12, 0, 1, 'pulse'), block: 14 }, 'mosh1'); g.out('mosh1'); });
 def('GLITCH', 'Pixel Stretch', '明るい部分が縦に引き伸びるピクセルソート風', g => g.out(g.fx('pixelstretch', g.cam, { thresh: .55, len: .4 })));
 def('GLITCH', 'Block Error', 'ブロック単位でずれる圧縮エラー', g => { let x = g.fx('jpeg', g.cam, { block: 8, q: 9, chroma: 2 }); g.out(g.fx('blockglitch', x, { amount: '=' + g.bass(.25, .95) })); });
 def('GLITCH', 'Sync Tear', '同期が外れて横に裂ける画面', g => { let x = g.fx('tear', g.cam, { amount: .06, band: .08, roll: .15 }); x = g.fx('chroma', x, { amount: .006, radial: 0 }); g.out(g.fx('scanlines', x, { amount: .25, count: 300 })); });
-def('GLITCH', 'Bit Crush', '色数と解像度を落とした低ビット画像', g => g.out(g.fx('poster', g.cam, { levels: 3, dither: 1, px: 5, sat: 1.3 })));
+def('GLITCH', 'Pixelate', 'ブロック化した輪郭線に、ノイズの穴から遅れた映像がのぞく', g => { const c = g.cam, ed = g.top('edge', [c], { strength: 10 }), px = g.top('pixelate', [ed], { horsize: 4, vertsize: 2 });
+  const n = g.top('noise', [g.level(c, { invert: .228, blacklevel: .5, brightness1: .37, gamma1: .93, contrast: 1.05 })], { seed: 1451, period: .35, harmon: 0, spread: 5.4, gain: 2, exp: 4, amp: 2, offset: 1, mono: 'off', tz: '=' + T + '*.05' });
+  const tm = g.tima(g.cache(c, 64, 2), px, 0, -87); g.key(px, 'horsize', 'Pixel', 1, 40).key(ed, 'strength', 'Edge', 1, 20).key(n, 'amp', 'Holes', 0, 6).key(tm, 'whiteoffset', 'Delay', -120, 0);
+  g.out(g.top('matte', [px, tm, g.top('thresh', [n], { threshold: 1 })])); });
 def('GLITCH', 'ASCII Term', '文字だけで描く緑の端末', g => g.out(g.glow(g.fx('ascii', g.cam, {}), { threshold: .3, size: 10, intensity: .5 })));
 def('GLITCH', 'Code Rain', '映像の明るさに沿って流れ落ちる文字', g => g.out(g.glow(g.fx('matrix', g.cam, { gain: 2.2 }), { threshold: .25, size: 12, intensity: .8 })));
-def('GLITCH', 'Thermal', '温度分布のようなサーマルカメラ', g => g.out(g.fx('thermal', g.blur(g.cam, 4), { mode: 0, gain: 1.1 })));
+def('GLITCH', 'Thermal', '明暗を反転して熱の残像を重ね、色の帯に置き換えるサーマルビジョン', g => { const ll = g.top('lumalevel', [g.cam], { invert: 1, blacklevel: .38, brightness1: 2, gamma1: 3, contrast: .8 });
+  const trail = g.level(g.top('blur', [g.fb('heat', ll)], { preshrink: 3, size: 6 }), { opacity: .924 }); g.comp('over', [trail, ll], 'heat');
+  const lk = g.top('lookup', ['heat', g.ramp([[0, 0, 0, 0, 0], [.30964467, .83739996, 1, .729, 1], [.51522845, .70719993, .634, 1, .518], [.70558375, 0, 1, .73333335, 1], [1, .587, .60765, 1, 1]])]);
+  const n = g.top('noise', [lk], { seed: 9999, period: 0, spread: 0, gain: .25, exp: 2.88, amp: .5, offset: 0 }); g.key(trail, 'opacity', 'Trail', 0, .98).key(n, 'amp', 'Grain', 0, 1).key(ll, 'blacklevel', 'Level', 0, .8);
+  g.out(g.comp('overlay', [g.top('displace', [g.top('blur', [g.level(n, { blacklevel: .1, brightness1: .9 })], { size: 2 }), n], { vertsource: 'blue', displaceweightx: .01, displaceweighty: .01 }), n])); });
 def('GLITCH', 'Night Vision', '緑の暗視スコープ', g => { let x = g.fx('thermal', g.fx('grade', g.cam, { exposure: .8, contrast: 1.2 }), { mode: 3 }); x = g.fx('grain', x, { amount: .25, size: 2, color: 0 }); x = g.glow(x, { threshold: .55, size: 16, intensity: .6 });
   x = g.fx('scanlines', x, { amount: .2, count: 360 }); g.out(g.fx('vignette', x, { amount: 1.2, radius: .8, soft: .25, round: 1 })); });
 def('GLITCH', 'X-Ray', '反転した青い透過像と輪郭', g => { const c = g.cam; let x = g.fx('duotone', g.level(c, { invert: 1 }), { contrast: 1, c1: '#020812', c2: '#2a6fb0', c3: '#cfe6f5' }); x = g.blend(x, g.fx('edges', c, { strength: 3 }), 'add', .5); g.out(g.glow(x, { threshold: .7, size: 14, intensity: .25 })); });
@@ -1342,7 +1419,7 @@ def('SPACE', 'Infinity Mirror', '画面の中に画面が続く合わせ鏡', g 
 def('SPACE', 'Shatter', '割れたガラスのようにずれる破片', g => g.out(g.fx('shards', g.cam, {})));
 
 /** build the graph for one original preset */
-function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio }; }
+function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio, keys: g.keys || [] }; }
 
 /* App — camera, library of presets in folders, adjust sheet, capture, install */
 const $ = id => document.getElementById(id);
@@ -1482,7 +1559,11 @@ function nodeControls(name, n, onlyStar) { const out = [], key = k => name + '.'
   return out; }
 function buildAdjust() { const it = cur(), g = it.graph, box = $('adjBody'); box.textContent = ''; $('adjName').textContent = it.name;
   box.append(slider('Intensity', '', 0, 1, .01, engine.intensity, v => { engine.intensity = v; }));
-  const keys = []; for (const [name, n] of Object.entries(g.nodes)) if (n.fam === 'TOP' && !engine.hidden(name)) keys.push(...nodeControls(name, n, true)); keys.slice(0, 6).forEach(k => box.append(k));
+  const keys = [];
+  /* main sliders a preset names itself (operator networks built from plain TOPs have no starred FX parameter) */
+  for (const k of g.keys || []) { const n = g.nodes[k.node], pr = n && n.params[k.param]; if (!n || (pr && pr.e)) continue; const id = k.node + '.' + k.param, v = engine.ov[id] ?? (pr ? parseFloat(pr.v) : k.def ?? k.min);
+    keys.push(slider(k.label, '', k.min, k.max, (k.max - k.min) / 200, isFinite(v) ? v : k.min, x => { engine.ov[id] = x; })); }
+  for (const [name, n] of Object.entries(g.nodes)) if (n.fam === 'TOP' && !engine.hidden(name)) keys.push(...nodeControls(name, n, true)); keys.slice(0, 6).forEach(k => box.append(k));
   const det = document.createElement('details'), sm = document.createElement('summary'); sm.textContent = 'すべてのパラメータ'; det.append(sm);
   for (const [name, n] of Object.entries(g.nodes)) { if (n.fam !== 'TOP' || engine.hidden(name)) continue; const cs = nodeControls(name, n, false); if (!cs.length) continue; const nd = document.createElement('div'); nd.className = 'node';
     const h = document.createElement('h4'); h.textContent = n.type === 'glsl' ? n.params.fx.v : engine.macro[name] ? n.params.parentshortcut.v : n.type; const sm2 = document.createElement('small'); sm2.textContent = name; h.append(sm2); nd.append(h, ...cs); det.append(nd); }

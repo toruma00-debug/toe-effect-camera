@@ -16,6 +16,10 @@ class GraphBuilder {
   glow(x, par) { return this.top('glow', [x], par); }
   comp(op, ins, name) { return this.top('comp', ins, { operand: op }, name); }
   blend(a, b, mode, opacity, name) { return this.fx('blend', [a, b], { mode: { normal: 0, add: 1, screen: 2, multiply: 3, overlay: 4, lighten: 5, darken: 6, difference: 7, subtract: 8, ghost: 9 }[mode], opacity: opacity ?? 1 }, name); }
+  /** a parameter shown as a main slider in the Adjust sheet */
+  key(node, param, label, min, max, def) { (this.keys = this.keys || []).push({ node, param, label, min, max, def }); return this; }
+  /** Ramp TOP from colour keys [[pos, r, g, b, a], ...] */
+  ramp(keys, par) { return this.top('ramp', [], Object.assign({ keys: JSON.stringify(keys) }, par)); }
   /** last frame's output of the named node (a Feedback TOP) */
   fb(target, init) { return this.top('feedback', [init || this.cam], { top: target }); }
   prev(x) { return this.top('feedback', [x], { top: x }); }
@@ -37,6 +41,18 @@ const ORIGINALS = [];
 const def = (cat, name, desc, fn) => ORIGINALS.push({ cat, name, desc, fn });
 
 /* ───────── FILM ───────── */
+/* ---- systems ported from .toe files -------------------------------------------------------------------------
+   Film_Look_Color_Granding.toe : level -> threshold(soft) -> blur -> screen over the picture -> Bloom TOP -> Noise TOP used as grain.
+     out1 = colour look, out2 = the same summed with the picture then mono, out4 = red halation through a Lookup TOP + a ramp wash.
+   thermal_vision_effect.toe     : Luma Level (inverted) -> Feedback/Blur/Level loop composited Over itself -> Lookup TOP with a 5-key ramp
+     (RGBA independent) -> Noise -> Displace -> Overlay.
+   pixelate_effect.toe           : Edge -> palette Pixelate (4x2) used both as the picture and as the Time Machine map, shown through a
+     Matte TOP whose matte is a thresholded Noise TOP.
+   Parameter values are the ones stored in the files; the grain seed and the noise drift are animated here. */
+const filmGrain = (g, x, spread) => { const n = g.top('noise', [x], { seed: '=9999+floor(' + T + '*24)', period: 0, harmon: 1, spread, gain: 2, amp: .06, offset: 0 }); g.key(n, 'amp', 'Grain', 0, .25); return n; };
+/* the file lifts the picture x2 before the threshold, which suits dark footage; for a live camera the lift starts lower and is a slider */
+const filmBloom = (g, lift) => { const c = g.cam, pre = g.level(c, { brightness1: lift, gamma1: 1.1 }), hi = g.top('thresh', [pre], { rgb: 'rgbaverage', threshold: .7, soften: 1 }); g.key(pre, 'brightness1', 'Glow', .5, 2);
+  return g.top('bloom', [g.comp('screen', [g.top('blur', [hi], { preshrink: 8, size: 32 }), c])], { preblacklevel: .963 }); };
 def('FILM', 'Amber 400', '暖色ネガの色と粒子、淡いハレーション', g => { let x = g.fx('grade', g.cam, { temp: .28, tint: .05, contrast: 1.08, sat: 1.12, fade: .18, sh: '#7a8088', hi: '#8a8272' });
   x = g.glow(x, { threshold: .72, size: 26, intensity: .4, tint: '#ff8a4a' }); x = g.fx('grain', x, { amount: .13, size: 1.7 }); g.out(g.fx('vignette', x, { amount: .35 })); });
 def('FILM', 'Halation', 'ハイライトのまわりに赤くにじむ光', g => { let x = g.fx('grade', g.cam, { contrast: 1.15, sat: 1.05, fade: .08, temp: .06 });
@@ -46,7 +62,8 @@ def('FILM', 'Super 8', '揺れ・傷・フリッカーのある8mmフィルム',
   x = g.fx('grain', x, { amount: .22, size: 2.4, color: .3 }); g.out(g.fx('vignette', x, { amount: .8, radius: .78, soft: .25, round: .2 })); });
 def('FILM', 'Bleach Bypass', '銀残し。低彩度でコントラストの強い画', g => { let x = g.fx('grade', g.cam, { sat: .35, contrast: 1.5, gamma: .95, sh: '#7c8084', hi: '#84827c' }); x = g.fx('grain', x, { amount: .1 }); g.out(g.fx('vignette', x, { amount: .3 })); });
 def('FILM', 'Cross Process', 'クロスプロセスの色転び', g => { let x = g.fx('grade', g.cam, { contrast: 1.3, sat: 1.35, tint: -.25, gamma: 1.05, sh: '#5a8a78', hi: '#a09050' }); x = g.fx('vignette', x, { amount: .5, radius: .68 }); g.out(g.fx('grain', x, { amount: .1, color: .5 })); });
-def('FILM', 'Tri-X Push', '増感現像したモノクロ、荒い粒子', g => { let x = g.fx('grade', g.cam, { sat: 0, contrast: 1.55, gamma: .92 }); x = g.fx('grain', x, { amount: .22, size: 2.2, luma: .3, color: 0 }); g.out(g.fx('vignette', x, { amount: .4 })); });
+def('FILM', 'Tri-X Push', '増感現像したモノクロ。飛び気味のハイライトと粒子', g => { let x = g.top('add', [filmBloom(g, 1.1), g.level(g.cam, { opacity: .15 })]); x = g.top('mono', [filmGrain(g, x, 10.2)]);
+  x = g.level(x, { blacklevel: .1, contrast: 1.2 }); x = g.fx('grain', x, { amount: .14, size: 2.2, luma: .3, color: 0 }); g.out(g.fx('vignette', x, { amount: .35 })); });
 def('FILM', 'Aerochrome', '赤外カラーフィルム。緑が赤紫に転ぶ', g => { let x = g.fx('hueshift', g.cam, { from: .3, to: .93, width: .17, sat: 1.5 }); x = g.fx('grade', x, { contrast: 1.12, sat: 1.1, sh: '#78828c', hi: '#868078' }); g.out(g.fx('grain', x, { amount: .1 })); });
 def('FILM', 'Instant Fade', '褪せたインスタント写真', g => { let x = g.fx('grade', g.cam, { exposure: .3, fade: .5, contrast: .9, sat: .8, temp: .12, gamma: 1.1, sh: '#6c8490', hi: '#908a78' }); x = g.blur(x, 1.5);
   x = g.fx('vignette', x, { amount: .45, soft: .6 }); g.out(g.fx('grain', x, { amount: .08 })); });
@@ -62,24 +79,32 @@ def('FILM', 'Sepia Reel', 'セピアに焼けた古い映画フィルム', g => 
   x = g.fx('dust', x, { density: .9, scratch: .8, flicker: .22 }); x = g.fx('vignette', x, { amount: .6, radius: .72 }); g.out(g.fx('grain', x, { amount: .2, size: 2, color: 0 })); });
 def('FILM', 'Two-Strip', '赤とシアンだけで刷る2色法', g => { let x = g.fx('mixer', g.cam, { r: '#ff3018', g: '#18b0a0', b: '#085858' }); x = g.fx('grade', x, { contrast: 1.15, sat: 1.1, fade: .1 }); x = g.fx('grain', x, { amount: .12 }); g.out(g.fx('vignette', x, { amount: .4 })); });
 def('FILM', 'Cyanotype', '青一色の日光写真', g => { let x = g.fx('duotone', g.cam, { contrast: 1.15, c1: '#06223f', c2: '#2f6ea3', c3: '#eef4f6' }); x = g.fx('paper', x, { amount: .5 }); x = g.fx('dust', x, { density: .3, scratch: 0, flicker: 0 }); g.out(g.fx('vignette', x, { amount: .3 })); });
-def('FILM', 'Expired Roll', '期限切れフィルムの色かぶりとかぶり', g => { let x = g.fx('grade', g.cam, { fade: .4, contrast: .85, sat: .7, tint: .3, temp: -.05, sh: '#8a7088', hi: '#88907a' }); x = g.fx('leak', x, { amount: .4, c1: '#c0206a', c2: '#ff9a5a', edge: .8 });
-  x = g.fx('grain', x, { amount: .18, size: 2.6, color: .7 }); g.out(g.fx('vignette', x, { amount: .45 })); });
+def('FILM', 'Expired Roll', '期限切れフィルムの紫かぶりと、ハイライトの赤いにじみ', g => { const c = g.cam;
+  const hi = g.top('thresh', [g.level(c, { brightness1: 2, gamma1: 1.1 })], { rgb: 'rgbaverage', threshold: 1, soften: .244 });
+  const red = g.top('lookup', [hi, g.ramp([[0, 0, 0, 0, 1], [1, .862, 0, 0, 1]])], { index1: 0, index2: 8, lightuv1: 20, lightuv2: 19.5 });
+  const wash = g.level(g.ramp([[0, 0, 0, 0, 1], [.002538071, .681, .64695, 0, .874], [.002538071, .1500001, 0, 1, 1], [1, 1, 0, .9833331, .369]]), { invert: .145 }); g.key(wash, 'opacity', 'Cast', 0, 1, 1);
+  let x = g.comp('screen', [wash, g.comp('screen', [g.top('blur', [red], { size: 32 }), c])]); x = g.level(x, { brightness1: .86, gamma1: .88, contrast: .87 }); g.out(filmGrain(g, x, 10.1)); });
 def('FILM', 'Tungsten 800', '夜の青緑と、灯りの赤いハレーション', g => { let x = g.fx('grade', g.cam, { temp: -.35, tint: -.05, contrast: 1.15, sat: 1.1, sh: '#6a8088', hi: '#808890' }); x = g.glow(x, { threshold: .78, size: 34, intensity: .7, tint: '#ff2a1a' }); g.out(g.fx('grain', x, { amount: .16 })); });
 def('FILM', 'Anamorphic', '横に伸びる青いフレアとシネスコの帯', g => { const c = g.cam; let s = g.half(g.level(c, { blacklevel: .8, brightness1: 3 })); s = g.fx('dirblur', s, { len: .4, angle: 0, decay: 1.6, gain: 1.2 }); s = g.fx('tint', s, { c: '#3f9cff', gain: .8 });
   let x = g.fx('grade', c, { contrast: 1.12, sat: 1.1, sh: '#6e8690', hi: '#928670' }); x = g.blend(x, s, 'add'); x = g.fx('chroma', x, { amount: .004 }); x = g.fx('bars', x, { bars: .11 }); g.out(g.fx('grain', x, { amount: .07 })); });
-def('FILM', 'Pro Mist', 'ハイライトがやわらかく滲むディフュージョン', g => { let x = g.glow(g.cam, { threshold: .6, size: 40, intensity: .4 }); g.out(g.fx('grade', x, { contrast: .92, fade: .15, sat: 1.05 })); });
-
-/* ───────── GLITCH ───────── */
+def('FILM', 'Film Look', 'ハイライトのにじみとブルーム、細かい粒子のフィルムルック', g => g.out(filmGrain(g, filmBloom(g, 1.1), 10.4)));
 def('GLITCH', 'RGB Split', '音で開く色ずれ', g => { let x = g.fx('chroma', g.cam, { amount: '=' + g.bass(.006, .035), radial: 0, angle: '=' + T + '*40' }); g.out(g.fx('tear', x, { amount: .012, band: .03, speed: 6 })); });
 def('GLITCH', 'Datamosh', '動きだけが画を押し流すデータモッシュ', g => { const c = g.cam, lo = g.top('res', [g.blur(c, 6)], { outputresolution: 'quarter' }, 'lo'); const fl = g.blur(g.fx('flow', [lo, g.prev(lo)], { gain: 1.5 }), 4);
   g.fx('mosh', [g.fb('mosh1', c), fl, c], { carry: 2.2, refresh: .004, key: '=' + g.lfo(.12, 0, 1, 'pulse'), block: 14 }, 'mosh1'); g.out('mosh1'); });
 def('GLITCH', 'Pixel Stretch', '明るい部分が縦に引き伸びるピクセルソート風', g => g.out(g.fx('pixelstretch', g.cam, { thresh: .55, len: .4 })));
 def('GLITCH', 'Block Error', 'ブロック単位でずれる圧縮エラー', g => { let x = g.fx('jpeg', g.cam, { block: 8, q: 9, chroma: 2 }); g.out(g.fx('blockglitch', x, { amount: '=' + g.bass(.25, .95) })); });
 def('GLITCH', 'Sync Tear', '同期が外れて横に裂ける画面', g => { let x = g.fx('tear', g.cam, { amount: .06, band: .08, roll: .15 }); x = g.fx('chroma', x, { amount: .006, radial: 0 }); g.out(g.fx('scanlines', x, { amount: .25, count: 300 })); });
-def('GLITCH', 'Bit Crush', '色数と解像度を落とした低ビット画像', g => g.out(g.fx('poster', g.cam, { levels: 3, dither: 1, px: 5, sat: 1.3 })));
+def('GLITCH', 'Pixelate', 'ブロック化した輪郭線に、ノイズの穴から遅れた映像がのぞく', g => { const c = g.cam, ed = g.top('edge', [c], { strength: 10 }), px = g.top('pixelate', [ed], { horsize: 4, vertsize: 2 });
+  const n = g.top('noise', [g.level(c, { invert: .228, blacklevel: .5, brightness1: .37, gamma1: .93, contrast: 1.05 })], { seed: 1451, period: .35, harmon: 0, spread: 5.4, gain: 2, exp: 4, amp: 2, offset: 1, mono: 'off', tz: '=' + T + '*.05' });
+  const tm = g.tima(g.cache(c, 64, 2), px, 0, -87); g.key(px, 'horsize', 'Pixel', 1, 40).key(ed, 'strength', 'Edge', 1, 20).key(n, 'amp', 'Holes', 0, 6).key(tm, 'whiteoffset', 'Delay', -120, 0);
+  g.out(g.top('matte', [px, tm, g.top('thresh', [n], { threshold: 1 })])); });
 def('GLITCH', 'ASCII Term', '文字だけで描く緑の端末', g => g.out(g.glow(g.fx('ascii', g.cam, {}), { threshold: .3, size: 10, intensity: .5 })));
 def('GLITCH', 'Code Rain', '映像の明るさに沿って流れ落ちる文字', g => g.out(g.glow(g.fx('matrix', g.cam, { gain: 2.2 }), { threshold: .25, size: 12, intensity: .8 })));
-def('GLITCH', 'Thermal', '温度分布のようなサーマルカメラ', g => g.out(g.fx('thermal', g.blur(g.cam, 4), { mode: 0, gain: 1.1 })));
+def('GLITCH', 'Thermal', '明暗を反転して熱の残像を重ね、色の帯に置き換えるサーマルビジョン', g => { const ll = g.top('lumalevel', [g.cam], { invert: 1, blacklevel: .38, brightness1: 2, gamma1: 3, contrast: .8 });
+  const trail = g.level(g.top('blur', [g.fb('heat', ll)], { preshrink: 3, size: 6 }), { opacity: .924 }); g.comp('over', [trail, ll], 'heat');
+  const lk = g.top('lookup', ['heat', g.ramp([[0, 0, 0, 0, 0], [.30964467, .83739996, 1, .729, 1], [.51522845, .70719993, .634, 1, .518], [.70558375, 0, 1, .73333335, 1], [1, .587, .60765, 1, 1]])]);
+  const n = g.top('noise', [lk], { seed: 9999, period: 0, spread: 0, gain: .25, exp: 2.88, amp: .5, offset: 0 }); g.key(trail, 'opacity', 'Trail', 0, .98).key(n, 'amp', 'Grain', 0, 1).key(ll, 'blacklevel', 'Level', 0, .8);
+  g.out(g.comp('overlay', [g.top('displace', [g.top('blur', [g.level(n, { blacklevel: .1, brightness1: .9 })], { size: 2 }), n], { vertsource: 'blue', displaceweightx: .01, displaceweighty: .01 }), n])); });
 def('GLITCH', 'Night Vision', '緑の暗視スコープ', g => { let x = g.fx('thermal', g.fx('grade', g.cam, { exposure: .8, contrast: 1.2 }), { mode: 3 }); x = g.fx('grain', x, { amount: .25, size: 2, color: 0 }); x = g.glow(x, { threshold: .55, size: 16, intensity: .6 });
   x = g.fx('scanlines', x, { amount: .2, count: 360 }); g.out(g.fx('vignette', x, { amount: 1.2, radius: .8, soft: .25, round: 1 })); });
 def('GLITCH', 'X-Ray', '反転した青い透過像と輪郭', g => { const c = g.cam; let x = g.fx('duotone', g.level(c, { invert: 1 }), { contrast: 1, c1: '#020812', c2: '#2a6fb0', c3: '#cfe6f5' }); x = g.blend(x, g.fx('edges', c, { strength: 3 }), 'add', .5); g.out(g.glow(x, { threshold: .7, size: 14, intensity: .25 })); });
@@ -170,5 +195,5 @@ def('SPACE', 'Infinity Mirror', '画面の中に画面が続く合わせ鏡', g 
 def('SPACE', 'Shatter', '割れたガラスのようにずれる破片', g => g.out(g.fx('shards', g.cam, {})));
 
 /** build the graph for one original preset */
-function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio }; }
+function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio, keys: g.keys || [] }; }
 if (typeof module !== 'undefined') module.exports = { ORIGINALS, FOLDERS, buildOriginal, GraphBuilder };

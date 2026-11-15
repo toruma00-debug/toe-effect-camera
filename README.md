@@ -10,8 +10,8 @@
 
 | フォルダ | 方向性 | 例 |
 |---|---|---|
-| FILM | フィルムとアナログの質感 | Amber 400 / Halation / Super 8 / VHS Rental / Tintype |
-| GLITCH | デジタルの乱れと信号 | Datamosh / Pixel Stretch / ASCII Term / Thermal / Hologram |
+| FILM | フィルムとアナログの質感 | Amber 400 / Halation / Super 8 / VHS Rental / Film Look |
+| GLITCH | デジタルの乱れと信号 | Datamosh / Pixel Stretch / Pixelate / Thermal / Hologram |
 | LIGHT | 光・グロー・残像 | Neon Edge / Light Trails / Prism / God Rays / Blacklight |
 | GRAPHIC | 印刷とイラストレーション | Halftone / Risograph / Toon / Oil Paint / Blueprint |
 | SPACE | 歪み・時間・立体 | Kaleido / Slit Scan / Time Melt / Point Cloud / Infinity Mirror |
@@ -46,7 +46,7 @@
 ## 仕組み
 
 1. **グラフ形式**：オペレーター（TOP / CHOP）・接続・パラメータ・エクスプレッションを持つネットワーク。.toe から読み出したものも、オリジナルのプリセットも同じ形式です
-2. **エンジン**（`src/engine.js`）：TOP をシェーダーに対応させて毎フレーム評価します（Level / Composite / Blur / Displace / Feedback / Time Machine など約 50 種類）。CHOP（LFO・ノイズ・音声解析）とパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds`、`sin()` など）も評価します
+2. **エンジン**（`src/engine.js`）：TOP をシェーダーに対応させて毎フレーム評価します（Level / Luma Level / Composite / Matte / Lookup / Ramp / Blur / Displace / Feedback / Time Machine など約 60 種類）。CHOP（LFO・ノイズ・音声解析）とパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds`、`sin()` など）も評価します
 3. **FX ライブラリ**（`src/fx.js`）：GLSL TOP に相当する 70 種類あまりのシェーダー（フィルムの色と粒子、ハーフトーン、Kuwahara、オプティカルフロー、データモッシュ、万華鏡 など）
 4. **プリセット**（`src/presets.js`）：上の部品をつないだ小さなネットワーク。1 プリセットが 1〜数行です
 5. **.toe の読み込み**（`src/toe.js`）：TEA-ECB で包まれた zlib ストリームをブラウザ内で展開します。設定の「.toe を読み込む」から手元のファイルを実行できます
@@ -60,6 +60,20 @@ def('GLITCH', 'Datamosh', '…', g => {
   g.out('mosh1');
 });
 ```
+
+### .toe から移植したシステム
+
+次のプリセットは、.toe ファイルのネットワーク（オペレーターのつなぎ方とパラメータ値）をそのまま移したものです。カメラ入力向けに一部の値を調整し、主要な値は Adjust のスライダーに出しています。
+
+| プリセット | 元のネットワーク |
+|---|---|
+| GLITCH / Thermal | Luma Level（反転）→ Feedback・Blur・Level のループを Over で重ねる → 5 色の Ramp を Lookup（RGBA 個別）→ Noise → Displace → Overlay |
+| GLITCH / Pixelate | Edge → パレットの Pixelate（4×2）を、絵と Time Machine のマップの両方に使い、Noise を Threshold したマットで Matte 合成 |
+| FILM / Film Look | Level → Threshold（ソフト）→ Blur → Screen → Bloom TOP → Noise TOP（粒子） |
+| FILM / Expired Roll | 同じファイルの別出力：Threshold → 赤い Ramp を Lookup → Blur → Screen、Ramp の色かぶりを Screen、Level、粒子 |
+| FILM / Tri-X Push | 同じファイルの別出力：ブルームした絵に元の絵を Add → 粒子 → Monochrome |
+
+同じ .toe は、設定の「.toe を読み込む」からそのまま実行することもできます。
 
 ## ビルド
 

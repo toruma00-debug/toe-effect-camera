@@ -136,7 +136,11 @@ function nodeControls(name, n, onlyStar) { const out = [], key = k => name + '.'
   return out; }
 function buildAdjust() { const it = cur(), g = it.graph, box = $('adjBody'); box.textContent = ''; $('adjName').textContent = it.name;
   box.append(slider('Intensity', '', 0, 1, .01, engine.intensity, v => { engine.intensity = v; }));
-  const keys = []; for (const [name, n] of Object.entries(g.nodes)) if (n.fam === 'TOP' && !engine.hidden(name)) keys.push(...nodeControls(name, n, true)); keys.slice(0, 6).forEach(k => box.append(k));
+  const keys = [];
+  /* main sliders a preset names itself (operator networks built from plain TOPs have no starred FX parameter) */
+  for (const k of g.keys || []) { const n = g.nodes[k.node], pr = n && n.params[k.param]; if (!n || (pr && pr.e)) continue; const id = k.node + '.' + k.param, v = engine.ov[id] ?? (pr ? parseFloat(pr.v) : k.def ?? k.min);
+    keys.push(slider(k.label, '', k.min, k.max, (k.max - k.min) / 200, isFinite(v) ? v : k.min, x => { engine.ov[id] = x; })); }
+  for (const [name, n] of Object.entries(g.nodes)) if (n.fam === 'TOP' && !engine.hidden(name)) keys.push(...nodeControls(name, n, true)); keys.slice(0, 6).forEach(k => box.append(k));
   const det = document.createElement('details'), sm = document.createElement('summary'); sm.textContent = 'すべてのパラメータ'; det.append(sm);
   for (const [name, n] of Object.entries(g.nodes)) { if (n.fam !== 'TOP' || engine.hidden(name)) continue; const cs = nodeControls(name, n, false); if (!cs.length) continue; const nd = document.createElement('div'); nd.className = 'node';
     const h = document.createElement('h4'); h.textContent = n.type === 'glsl' ? n.params.fx.v : engine.macro[name] ? n.params.parentshortcut.v : n.type; const sm2 = document.createElement('small'); sm2.textContent = name; h.append(sm2); nd.append(h, ...cs); det.append(nd); }
