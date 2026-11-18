@@ -1,7 +1,7 @@
 {
  "name": "TOE Effect Camera",
  "short_name": "TOE Cam",
- "description": "100種類のリアルタイムエフェクトを備えたカメラ",
+ "description": "120種類のリアルタイムエフェクトを備えたカメラ",
  "lang": "ja",
  "start_url": "./",
  "scope": "./",

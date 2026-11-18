@@ -80,7 +80,7 @@ function select(cat, idx, quiet) { const F = folders(); cat = (cat + F.length) %
   $('tOver').textContent = F[cat].id + '  ' + pad(idx + 1) + ' / ' + pad(n); $('tName').textContent = it.name; $('tDesc').textContent = it.desc;
   $('title').classList.remove('idle'); clearTimeout(titleTimer); titleTimer = setTimeout(() => $('title').classList.add('idle'), 3200);
   if (catChanged || !$('strip').children.length || $('strip').dataset.cat !== F[cat].id) buildStrip();
-  for (const b of $('cats').children) b.setAttribute('aria-pressed', b.dataset.cat === F[cat].id);
+  for (const b of $('cats').children) { const on = b.dataset.cat === F[cat].id; b.setAttribute('aria-pressed', on); if (on && catChanged) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: quiet ? 'auto' : 'smooth' }); }
   [...$('strip').children].forEach((b, i) => { b.setAttribute('aria-selected', i === idx); if (i === idx) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: quiet ? 'auto' : 'smooth' }); });
   if (!standalone) try { history.replaceState(null, '', '#' + it.slug); } catch (e) { }
   persist(); if ($('adj').classList.contains('open')) buildAdjust(); if ($('lib').classList.contains('open')) markLib(); }

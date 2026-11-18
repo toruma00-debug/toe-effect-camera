@@ -77,6 +77,12 @@ vec4 lk(float v){ float t=clamp((v-uIdx.x)/max(uIdx.y-uIdx.x,1e-5),0.,1.); retur
 void main(){ vec4 c=texture(A,vUV); if(uCh==9){ o=vec4(lk(c.r).r,lk(c.g).g,lk(c.b).b,lk(c.a).a); return; }
   float v=uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:uCh==7?max(c.r,max(c.g,c.b)):uCh==8?max(max(c.r,c.g),max(c.b,c.a)):lum(c.rgb);
   o=lk(v); if(uIA>.5) o.a=lk(c.a).a; }`,
+  /* one layer of a texture-array cache (Cache TOP used as a delay) */
+  arrlayer: `uniform highp sampler2DArray uArr; uniform float uLayer; void main(){ o=texture(uArr,vec3(vUV,uLayer)); }`,
+  /* Blob Track TOP, analysis pass at low resolution: share of the cell where the picture (or its difference to the background input) passes the threshold */
+  blobmask: `uniform float uTh,uBg; uniform int uCh; uniform vec2 uCell;
+float ch(vec4 c){ return uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:lum(c.rgb); }
+void main(){ float n=0.; for(int j=0;j<4;j++) for(int i=0;i<4;i++){ vec2 q=vUV+(vec2(float(i),float(j))-1.5)*.25*uCell*1.6; float a=ch(texture(A,q)); n+=step(uTh,uBg>.5?abs(a-ch(texture(B,q))):a); } o=vec4(vec3(n/16.),1.); }`,
   /* Matte TOP: input 1 over input 2 through one channel of input 3 */
   matte: `uniform int uCh; void main(){ vec4 a=texture(A,vUV), b=texture(B,vUV), k=texture(C,vUV);
   float m=uCh==0?lum(k.rgb):uCh==1?k.r:uCh==2?k.g:uCh==3?k.b:uCh==5?(k.r+k.g+k.b)/3.:uCh==6?(k.r+k.g+k.b+k.a)/4.:k.a; o=mix(b,a,clamp(m,0.,1.)); }`,
@@ -180,7 +186,7 @@ class Engine {
     t = { tex: this.mkTex(w, h, eight), fbo: gl.createFramebuffer(), w, h };
     gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); return this.pool[key] = t; }
-  freeAll() { const gl = this.gl; for (const k in this.pool) { gl.deleteTexture(this.pool[k].tex); gl.deleteFramebuffer(this.pool[k].fbo); } this.pool = {}; for (const t of this.extra) { gl.deleteTexture(t.tex); if (t.fbo) gl.deleteFramebuffer(t.fbo); } this.extra = []; }
+  freeAll() { const gl = this.gl; for (const k in this.pool) { gl.deleteTexture(this.pool[k].tex); gl.deleteFramebuffer(this.pool[k].fbo); } this.pool = {}; for (const t of this.extra) { if (t.tex) gl.deleteTexture(t.tex); if (t.fbo) gl.deleteFramebuffer(t.fbo); if (t.buf) gl.deleteBuffer(t.buf); if (t.st && t.st.sync) { gl.deleteSync(t.st.sync); t.st.sync = null; } } this.extra = []; }
   prog(key, fs, vs) { if (this.progs[key]) return this.progs[key]; const gl = this.gl, p = gl.createProgram();
     for (const [type, src] of [[gl.VERTEX_SHADER, vs || VS], [gl.FRAGMENT_SHADER, HEAD + fs]]) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('shader ' + key + ': ' + gl.getShaderInfoLog(s)); gl.attachShader(p, s); }
@@ -399,7 +405,14 @@ Engine.prototype.OPS = (() => {
   return {
     null: alias, in: function (p, N) { const par = dirname(p), pn = this.g.nodes[par], nm = par ? p.slice(par.length + 1) : p;
       if (pn && pn.compinputs && pn.compinputs[nm]) { const s = this.ref(par, pn.compinputs[nm]); return s ? this.ev(s) : this.black; } return this.in(p, 0); },
-    out: alias, cache: alias, moviefileout: alias, fit: alias, select: function (p) { const s = this.ref(p, this.S(p, 'top', '')); return s ? this.ev(s) : this.black; },
+    out: alias, moviefileout: alias,
+    /* Fit TOP: the picture already covers the frame; a Fit TOP left without an input stands where the video source was */
+    fit: function (p, N) { return N.inputs[0] ? this.in(p, 0) : this.src; },
+    /* Cache TOP: a negative Output Index makes it a delay line (0 = newest) */
+    cache: function (p, N, st) { const A = this.in(p, 0), idx = Math.round(this.P(p, 'outputindex', 0)); if (idx >= 0 || !N.inputs[0]) return A;
+      this.OPS.tex3d.call(this, p, N, st); if (!st.arr || !st.n) return A; const d = Math.min(st.n - 1, Math.round(-idx / st.step));
+      return this.draw('arrlayer', this.tgt(p, A.w, A.h), { uArr: { arr: st.arr }, uLayer: ((st.head - d) % st.K + st.K) % st.K }); },
+    select: function (p) { const s = this.ref(p, this.S(p, 'top', '')); return s ? this.ev(s) : this.black; },
     cacheselect: function (p) { const s = this.ref(p, this.S(p, 'cachetop', '')); return s ? this.ev(s) : this.black; },
     res: function (p) { const A = this.in(p, 0), [w, h] = this.size(p, A); if (Math.round(w) === A.w && Math.round(h) === A.h) return A; return this.draw('copy', this.tgt(p, w, h), { A }); },
     moviefilein: function (p, N, st) { const S = this.sourceFor(p, N), sp = N.params.speed; if (!sp || !sp.e || S !== this.src) return S;

@@ -15,7 +15,7 @@ if (/fonts\.googleapis|__[A-Z]+__/.test(html)) throw new Error('unreplaced place
 const out = __dirname; fs.mkdirSync(path.join(out, 'icons'), { recursive: true });
 fs.writeFileSync(path.join(out, 'index.html'), html);
 fs.writeFileSync(path.join(out, 'manifest.webmanifest'), JSON.stringify({
-  name: 'TOE Effect Camera', short_name: 'TOE Cam', description: '100種類のリアルタイムエフェクトを備えたカメラ', lang: 'ja', start_url: './', scope: './', id: './',
+  name: 'TOE Effect Camera', short_name: 'TOE Cam', description: '120種類のリアルタイムエフェクトを備えたカメラ', lang: 'ja', start_url: './', scope: './', id: './',
   display: 'standalone', orientation: 'any', background_color: '#0b0b0c', theme_color: '#0b0b0c', categories: ['photo', 'video', 'entertainment'],
   icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }, { src: 'icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }] }, null, 1));
 fs.writeFileSync(path.join(out, 'sw.js'), `/* offline cache for the app shell — the page is asked from the network first so updates arrive, then falls back to the cache */

@@ -297,7 +297,71 @@ const rotY = a => { const c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0,
 /** colour parameter: '#rrggbb' from the node, or an override set by the Adjust sheet */
 Engine.prototype.C = function (p, name, def) { const k = p + '.' + name; let v = k in this.ov ? this.ov[k] : this.S(p, name, def); if (typeof v !== 'string' || v[0] !== '#') v = def;
   const n = parseInt(v.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+/* ---- Blob Track TOP ------------------------------------------------------------------------------------------
+   TouchDesigner hands the picture to OpenCV; here a low-resolution mask is rendered on the GPU, read back without
+   stalling (pixel-pack buffer + fence, the "Next Frame" download type), and the rectangles are found on the CPU.
+   With a second input the mask is the thresholded difference to that background; without one, the bright areas. */
+function blobFind(st, o) { const gw = st.gw, gh = st.gh, data = st.data, on = st.on || (st.on = new Uint8Array(gw * gh)), stack = st.stack || (st.stack = new Int32Array(gw * gh)), rects = [];
+  for (let i = 0; i < gw * gh; i++) on[i] = data[i * 4] >= 44 ? 1 : 0;
+  for (let s = 0; s < gw * gh; s++) { if (on[s] !== 1) continue; let sp = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1, n = 0; stack[sp++] = s; on[s] = 2;
+    while (sp) { const c = stack[--sp], x = c % gw, y = (c - x) / gw; n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= gw || yy >= gh) continue; const k = yy * gw + xx; if (on[k] === 1) { on[k] = 2; stack[sp++] = k; } } }
+    const big = Math.max((x1 - x0 + 1) / gw, (y1 - y0 + 1) / gh); if (n < 2 || big < o.min || big > o.max) continue; rects.push({ x0: x0 / gw, y0: y0 / gh, x1: (x1 + 1) / gw, y1: (y1 + 1) / gh, n }); }
+  rects.sort((a, b) => b.n - a.n); const keep = [];
+  for (const r of rects) { if (keep.length >= o.count) break; if (keep.some(k => r.x0 >= k.x0 - .01 && r.x1 <= k.x1 + .01 && r.y0 >= k.y0 - .01 && r.y1 <= k.y1 + .01)) continue; keep.push(r); }
+  /* tracking: a rectangle keeps its ID while its centre moves less than Max Move Distance; IDs only go up */
+  const prev = st.blobs, used = new Set(), out = [];
+  for (const r of keep) { const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2; let best = null, bd = o.move;
+    for (const b of prev) { if (used.has(b)) continue; const d = Math.hypot((b.t.x0 + b.t.x1) / 2 - cx, (b.t.y0 + b.t.y1) / 2 - cy); if (d < bd) { bd = d; best = b; } }
+    if (best) { used.add(best); best.t = r; best.lost = 0; best.age++; out.push(best); } else out.push({ id: ++st.next, t: r, d: Object.assign({}, r), lost: 0, age: 0, a: 0 }); }
+  for (const b of prev) if (!used.has(b) && ++b.lost < 10) out.push(b);
+  st.blobs = out; }
+function blobDraw(x, W, H, blobs, o) { const u = Math.min(W, H) / 100, lw = Math.max(1, o.line * u * .14), col = 'rgb(' + o.col.map(v => Math.round(255 * Math.min(1, Math.max(0, v)))).join(',') + ')', z = n => String(n).padStart(2, '0');
+  x.lineWidth = lw; x.strokeStyle = col; x.fillStyle = col; x.font = '600 ' + (2.5 * u) + 'px ui-monospace,Menlo,Consolas,monospace'; x.textBaseline = 'alphabetic'; x.lineJoin = 'miter';
+  const R = blobs.map(b => { const g = o.grow, x0 = (b.d.x0 - g) * W, x1 = (b.d.x1 + g) * W, y0 = (1 - b.d.y1 - g) * H, y1 = (1 - b.d.y0 + g) * H; return { b, x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }; });
+  if (o.style === 'net') { const P = R.slice().sort((a, b) => a.cx - b.cx); x.globalAlpha = .75; x.beginPath(); P.forEach((r, i) => i ? x.lineTo(r.cx, r.cy) : x.moveTo(r.cx, r.cy)); x.stroke();
+    x.globalAlpha = .35; x.beginPath(); for (let i = 0; i + 2 < P.length; i++) { x.moveTo(P[i].cx, P[i].cy); x.lineTo(P[i + 2].cx, P[i + 2].cy); } x.stroke(); }
+  for (const r of R) { const a = r.b.a; if (a < .02) continue; x.globalAlpha = a;
+    if (o.style === 'mask') { x.fillStyle = '#fff'; x.fillRect(r.x, r.y, r.w, r.h); continue; }
+    if (o.style === 'bounds') { x.strokeRect(r.x, r.y, r.w, r.h); }
+    else if (o.style === 'net') { const q = 1.1 * u; x.strokeRect(r.cx - q, r.cy - q, q * 2, q * 2); x.globalAlpha = a * .3; x.strokeRect(r.x, r.y, r.w, r.h); x.globalAlpha = a; }
+    else { /* hud, cross, cctv: faint box, corner brackets, centre mark */
+      const k = Math.max(1.6 * u, Math.min(r.w, r.h) * .2); x.globalAlpha = a * .35; x.strokeRect(r.x, r.y, r.w, r.h); x.globalAlpha = a; x.lineWidth = lw * 1.6; x.beginPath();
+      for (const [px, py, sx, sy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) { x.moveTo(px + sx * k, py); x.lineTo(px, py); x.lineTo(px, py + sy * k); } x.stroke(); x.lineWidth = lw;
+      x.beginPath(); x.moveTo(r.cx - u, r.cy); x.lineTo(r.cx + u, r.cy); x.moveTo(r.cx, r.cy - u); x.lineTo(r.cx, r.cy + u); x.stroke();
+      if (o.style === 'cross') { x.globalAlpha = a * .4; x.beginPath(); x.moveTo(0, r.cy); x.lineTo(W, r.cy); x.moveTo(r.cx, 0); x.lineTo(r.cx, H); x.stroke(); x.globalAlpha = a; } }
+    if (o.label) { const ty = r.y > 4 * u ? r.y - 1.1 * u : r.y + r.h + 3.2 * u, cx = r.b.d.x0 / 2 + r.b.d.x1 / 2, cy = r.b.d.y0 / 2 + r.b.d.y1 / 2;
+      x.fillStyle = col; x.fillText(o.style === 'cctv' ? 'MOTION ' + z(r.b.id % 100) : o.style === 'net' ? cx.toFixed(2) + ' ' + cy.toFixed(2) : 'ID ' + z(r.b.id % 100) + '  ' + cx.toFixed(2) + ',' + cy.toFixed(2), o.style === 'net' ? r.cx + 1.6 * u : r.x, o.style === 'net' ? r.cy - 1.4 * u : ty); } }
+  x.globalAlpha = 1; }
 Object.assign(Engine.prototype.OPS, {
+  /* inputs: 0 picture to analyse, 1 background (optional), 2 picture to draw on (optional, not in TouchDesigner).
+     Extra parameters for presets: style (bounds | hud | cross | net | cctv | mask), label, linewidth, grow, maxblobs */
+  blobtrack(p, N, st) { const gl = this.gl, A = this.in(p, 0), B = N.inputs[1] ? this.in(p, 1) : null, onto = N.inputs[2] ? this.in(p, 2) : A, P = (k, d) => this.P(p, k, d), S = (k, d) => this.S(p, k, d);
+    const land = A.w >= A.h, gw = land ? 96 : Math.max(24, Math.round(96 * A.w / A.h)), gh = land ? Math.max(24, Math.round(96 * A.h / A.w)) : 96;
+    const an = this.draw('blobmask', this.tgt(p + '#an', gw, gh, true), { A, B: B || this.black, uBg: B ? 1 : 0, uTh: P('threshold', .1), uCell: [1 / gw, 1 / gh],
+      uCh: { i: ({ luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 })[S('monosource', 'luminance')] ?? 0 } });
+    if (!st.pbo || st.gw !== gw || st.gh !== gh) { if (st.sync) { gl.deleteSync(st.sync); st.sync = null; } if (!st.pbo) { st.pbo = gl.createBuffer(); this.extra.push({ buf: st.pbo, st }); }
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, gw * gh * 4, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      Object.assign(st, { gw, gh, data: new Uint8Array(gw * gh * 4), on: null, stack: null, blobs: st.blobs || [], next: st.next || 0 }); }
+    const find = { min: P('minblobsize', .02), max: P('maxblobsize', 1), move: P('maxmovedistance', .2), count: Math.max(1, Math.min(24, Math.round(P('maxblobs', 12)))) };
+    if (st.sync) { const r = gl.clientWaitSync(st.sync, 0, 0);
+      if (r === gl.ALREADY_SIGNALED || r === gl.CONDITION_SATISFIED) { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, st.data); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteSync(st.sync); st.sync = null;
+        blobFind(st, find); }
+      else if (r === gl.WAIT_FAILED || ++st.wait > 20) { gl.deleteSync(st.sync); st.sync = null; st.direct = true; } }   /* a browser whose fence never signals: read the small mask directly */
+    if (!st.sync) { gl.bindFramebuffer(gl.FRAMEBUFFER, an.fbo);
+      if (st.direct) { gl.readPixels(0, 0, gw, gh, gl.RGBA, gl.UNSIGNED_BYTE, st.data); blobFind(st, find); }
+      else { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.readPixels(0, 0, gw, gh, gl.RGBA, gl.UNSIGNED_BYTE, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); st.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); st.wait = 0; gl.flush(); } }
+    /* the drawn rectangles ease towards the tracked ones and fade when a blob is lost */
+    for (const b of st.blobs) { for (const k of ['x0', 'y0', 'x1', 'y1']) b.d[k] += (b.t[k] - b.d[k]) * .45; b.a += ((b.lost ? 0 : 1) - b.a) * (b.lost ? .22 : .4); }
+    const style = S('style', 'bounds'), shown = st.blobs.filter(b => b.a >= .02); if (S('drawblobs', 'on') === 'off' && style !== 'mask') return onto;
+    const t = this.tgt(p, onto.w, onto.h), k = Math.min(1, 1024 / Math.max(t.w, t.h)), cw = Math.max(2, Math.round(t.w * k)), chh = Math.max(2, Math.round(t.h * k));
+    if (!st.cv) { st.cv = document.createElement('canvas'); st.cx = st.cv.getContext('2d'); st.tex = this.mkTex(1, 1, true); this.extra.push({ tex: st.tex }); st.dirty = true; }
+    if (shown.length || st.dirty || st.cv.width !== cw || st.cv.height !== chh) { if (st.cv.width !== cw || st.cv.height !== chh) { st.cv.width = cw; st.cv.height = chh; } st.cx.clearRect(0, 0, cw, chh);
+      blobDraw(st.cx, cw, chh, shown, { style, label: S('label', style === 'bounds' || style === 'mask' ? 'off' : 'on') !== 'off', line: P('linewidth', 2), grow: P('grow', 0), col: [P('blobcolorr', 1), P('blobcolorg', 0), P('blobcolorb', 0)] });
+      gl.bindTexture(gl.TEXTURE_2D, st.tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, st.cv);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); st.dirty = shown.length > 0; }
+    return this.draw('tint', t, { A: { tex: st.tex }, B: onto, uCol: [1, 1, 1, 1], uHasIn: style === 'mask' ? 0 : 1 }); },
+
   glsl(p, N) { const name = this.S(p, 'fx', ''), U = FXSPEC[name]; if (!U) return this.in(p, 0); const I = [0, 1, 2, 3].map(k => N.inputs[k] ? this.in(p, k) : null);
     const un = { A: I[0] || this.black, B: I[1] || this.black, C: I[2] || this.black, D: I[3] || this.black }; for (const u of U) un['u_' + u.name] = u.vec ? this.C(p, u.name, u.def) : this.P(p, u.name, u.def);
     return this.draw('fx_' + name, this.T(p, I[0]), un); },

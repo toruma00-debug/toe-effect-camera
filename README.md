@@ -1,12 +1,12 @@
 # TOE Effect Camera
 
-ブラウザ（WebGL2）で動くリアルタイムのエフェクトカメラです。TouchDesigner の .toe に入っている TOP ネットワークをそのまま実行できるエンジンの上に、オリジナルのプリセットを 100 種類のせています。
+ブラウザ（WebGL2）で動くリアルタイムのエフェクトカメラです。TouchDesigner の .toe に入っている TOP ネットワークをそのまま実行できるエンジンの上に、オリジナルのプリセットを 120 種類のせています。
 
 **▶ https://toruma00-debug.github.io/toe-effect-camera/**
 
 ## プリセット
 
-5 つのフォルダに 20 種類ずつ、合計 100 種類です。
+6 つのフォルダに 20 種類ずつ、合計 120 種類です。
 
 | フォルダ | 方向性 | 例 |
 |---|---|---|
@@ -15,6 +15,7 @@
 | LIGHT | 光・グロー・残像 | Neon Edge / Light Trails / Prism / God Rays / Blacklight |
 | GRAPHIC | 印刷とイラストレーション | Halftone / Risograph / Toon / Oil Paint / Blueprint |
 | SPACE | 歪み・時間・立体 | Kaleido / Slit Scan / Time Melt / Point Cloud / Infinity Mirror |
+| SENSOR | 追跡・サーマル・時間のずれ | Tracker / Motion Boxes / Constellation / Ironbow / Scanner |
 
 ♪ の付いたプリセットは音に反応します（マイクを使わないときは 120BPM のオートビート）。
 
@@ -22,7 +23,7 @@
 
 - 下のフォルダ名とプリセット名をタップ、または画面を左右にスワイプで切り替え（上下スワイプでフォルダ移動）
 - 画面を長押しすると、押している間だけ元の映像を表示
-- **Library**：100 種類の一覧とお気に入り　**Adjust**：かかり具合と各パラメータ　右上：入力・音・画質などの設定
+- **Library**：120 種類の一覧とお気に入り　**Adjust**：かかり具合と各パラメータ　右上：入力・音・画質などの設定
 - **Photo / Video** を選んでシャッター。撮影後に保存・共有
 - キーボード：← → でプリセット、↑ ↓ でフォルダ、スペースで撮影
 
@@ -46,7 +47,7 @@
 ## 仕組み
 
 1. **グラフ形式**：オペレーター（TOP / CHOP）・接続・パラメータ・エクスプレッションを持つネットワーク。.toe から読み出したものも、オリジナルのプリセットも同じ形式です
-2. **エンジン**（`src/engine.js`）：TOP をシェーダーに対応させて毎フレーム評価します（Level / Luma Level / Composite / Matte / Lookup / Ramp / Blur / Displace / Feedback / Time Machine など約 60 種類）。CHOP（LFO・ノイズ・音声解析）とパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds`、`sin()` など）も評価します
+2. **エンジン**（`src/engine.js`）：TOP をシェーダーに対応させて毎フレーム評価します（Level / Luma Level / Composite / Matte / Lookup / Ramp / Blur / Displace / Feedback / Time Machine / Cache / Blob Track など約 60 種類）。CHOP（LFO・ノイズ・音声解析）とパラメータ式（`op('lfo1')['chan1']`、`absTime.seconds`、`sin()` など）も評価します
 3. **FX ライブラリ**（`src/fx.js`）：GLSL TOP に相当する 70 種類あまりのシェーダー（フィルムの色と粒子、ハーフトーン、Kuwahara、オプティカルフロー、データモッシュ、万華鏡 など）
 4. **プリセット**（`src/presets.js`）：上の部品をつないだ小さなネットワーク。1 プリセットが 1〜数行です
 5. **.toe の読み込み**（`src/toe.js`）：TEA-ECB で包まれた zlib ストリームをブラウザ内で展開します。設定の「.toe を読み込む」から手元のファイルを実行できます
@@ -74,6 +75,20 @@ def('GLITCH', 'Datamosh', '…', g => {
 | FILM / Tri-X Push | 同じファイルの別出力：ブルームした絵に元の絵を Add → 粒子 → Monochrome |
 
 同じ .toe は、設定の「.toe を読み込む」からそのまま実行することもできます。
+
+### SENSOR フォルダ
+
+4 つの .toe のネットワークを並べて学び、その部品を組み替えた 20 種類です。
+
+| もとの仕組み | 使っているプリセット |
+|---|---|
+| Blob Track TOP（2 番目の入力に遅らせた映像を入れ、動いた所を四角で囲む）と Cache TOP の遅延 | Tracker / Motion Boxes / Constellation / Auto Mosaic / Spotlight / Heat Seeker / CCTV / Red Alert / Ghost Diff |
+| Luma Level → Feedback・Blur・Level のループ → 色キーの Ramp を Lookup | Ironbow / White Hot / Rainbow Heat / Arctic / Heat Trail / Scanner / Noise Portal |
+| Noise を足した絵で Displace（縦に強く）し、Time Machine のマップにする | Drip / Time Drip / Tracker |
+| Edge → Pixelate を Time Machine のマップに、Noise の Threshold を Matte に | Edge Memory / Block Delay / Noise Portal |
+| Level → Threshold → Blur → Screen、黒から赤の Ramp を Lookup、Noise TOP の粒子 | White Hot / Red Alert / CCTV |
+
+Blob Track は、低解像度のマスクを GPU で作って非同期に読み戻し、CPU で連結領域を四角にして ID を引き継ぎます（TouchDesigner は OpenCV を使います）。
 
 ## ビルド
 

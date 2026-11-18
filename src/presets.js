@@ -36,7 +36,7 @@ class GraphBuilder {
 const T = 'absTime.seconds';
 const FOLDERS = [
   { id: 'FILM', jp: 'フィルムとアナログの質感' }, { id: 'GLITCH', jp: 'デジタルの乱れと信号' }, { id: 'LIGHT', jp: '光・グロー・残像' },
-  { id: 'GRAPHIC', jp: '印刷とイラストレーション' }, { id: 'SPACE', jp: '歪み・時間・立体' }];
+  { id: 'GRAPHIC', jp: '印刷とイラストレーション' }, { id: 'SPACE', jp: '歪み・時間・立体' }, { id: 'SENSOR', jp: '追跡・サーマル・時間のずれ' }];
 const ORIGINALS = [];
 const def = (cat, name, desc, fn) => ORIGINALS.push({ cat, name, desc, fn });
 
@@ -193,6 +193,69 @@ def('SPACE', 'Tiny Planet', '地平線を丸めた小さな惑星', g => g.out(g
 def('SPACE', 'Slit Stretch', '中央の帯だけ残して外側が伸びる', g => g.out(g.fx('stretch', g.cam, { pos: '=' + g.lfo(.07, .4, .6), width: .22 })));
 def('SPACE', 'Infinity Mirror', '画面の中に画面が続く合わせ鏡', g => { const c = g.cam; const f = g.level(g.xf(g.fb('mix1', c), { sx: .84, sy: .84, rotate: '=sin(' + T + '*0.3)*3', extend: 'zero' }), { brightness1: .96 }); g.comp('over', [f, c], 'mix1'); g.out('mix1'); });
 def('SPACE', 'Shatter', '割れたガラスのようにずれる破片', g => g.out(g.fx('shards', g.cam, {})));
+
+/* ───────── SENSOR ─────────
+   Twenty presets put together from four .toe networks studied side by side:
+     NewProject.2.toe          Noise (over the picture) -> Displace (x .04, y 1) as the Time Machine map, a Cache TOP used as an 8-frame delay,
+                               and a Blob Track TOP whose second input is that delayed picture (background subtraction -> rectangles on what moved)
+     thermal_vision_effect.toe Luma Level, the Feedback/Blur/Level loop composited Over itself, Lookup TOP + colour-key Ramp, Noise -> Displace -> Overlay
+     pixelate_effect.toe       Edge -> Pixelate as a Time Machine map, Matte TOP driven by a thresholded Noise
+     Film_Look_…toe            Level -> Threshold -> Blur -> Screen, Lookup with a black-to-red ramp as halation, Noise TOP as grain
+   RAINBOW is the unused 8-key ramp stored in the thermal file; the other ramps are written here. */
+const IRON = [[0, 0, 0, .03, 1], [.2, .16, 0, .42, 1], [.42, .62, .02, .5, 1], [.62, .95, .28, .06, 1], [.82, 1, .72, .05, 1], [1, 1, 1, .92, 1]];
+const RAINBOW = [[0, 0, 0, 0, .021], [.0888, 0, 0, 0, 1], [.2284, 0, .05, 1, .503], [.3198, .1167, 1, 0, 1], [.4619, 1, .9333, 0, 1], [.7843, 1, .3833, 0, 1], [1, 1, .0833, 0, 1], [1, 1, 0, 0, 1]];
+const ARCTIC = [[0, 0, .01, .06, 1], [.3, .02, .1, .34, 1], [.6, .08, .42, .78, 1], [.85, .55, .88, .97, 1], [1, 1, 1, 1, 1]];
+const WHITE = { blobcolorr: 1, blobcolorg: 1, blobcolorb: 1 };
+/** Cache TOP as a delay of n frames (NewProject.2) */
+const delayed = (g, x, n) => g.top('cache', [x], { cachesize: n + 1, outputindex: -n });
+/** the heat-persistence loop of the thermal file: the blurred last frame, dimmed by `hold`, is composited Over the live picture */
+const heatLoop = (g, src, hold, name) => { name = name || 'heat'; const tr = g.level(g.top('blur', [g.fb(name, src)], { preshrink: 3, size: 6 }), { opacity: hold }); g.comp('over', [tr, src], name); g.key(tr, 'opacity', 'Trail', 0, .98); return name; };
+const thermal = (g, keys, hold) => g.top('lookup', [heatLoop(g, g.top('mono', [g.blur(g.cam, 4)]), hold ?? .8), g.ramp(keys)], { channel: 'luminance' });
+const sensorGrain = (g, x, amp) => { const n = g.top('noise', [x], { seed: '=9999+floor(' + T + '*24)', period: 0, spread: 0, gain: .25, exp: 2.88, amp, offset: 0 }); g.key(n, 'amp', 'Grain', 0, .6); return n; };
+/** NewProject.2's melt: the picture plus coloured noise is the displacement map, with almost all of the weight on the vertical axis */
+const drip = (g, c, wy) => { const n = g.top('noise', [c], { seed: 5590, period: 1.18, harmon: 9, spread: 0, gain: 0, exp: 1.74, amp: .55, offset: .435, mono: 'off', tz: '=' + T + '*.06' });
+  const d = g.top('displace', [c, n], { displaceweightx: .04, displaceweighty: wy }); g.key(d, 'displaceweighty', 'Melt', 0, 1.2); return d; };
+/** Blob Track TOP: a = picture to analyse, b = background (the delayed picture -> only what moved), onto = picture the marks are drawn on */
+const track = (g, a, b, onto, par) => { const t = g.top('blobtrack', [a, b, onto], Object.assign({ threshold: .169, minblobsize: .018, maxblobsize: .81, maxmovedistance: .48 }, par)); g.key(t, 'threshold', 'Sense', .02, .6); return t; };
+const motion = (g, onto, par) => track(g, g.cam, delayed(g, g.cam, 6), onto, Object.assign({ threshold: .12, minblobsize: .05, maxmovedistance: .3 }, par));
+
+def('SENSOR', 'Tracker', '動いた所を四角で追う。映像はノイズで時間が溶ける', g => { const c = g.cam, tm = g.tima(g.cache(c, 100), drip(g, c, 1), -30, 0); g.key(tm, 'blackoffset', 'Delay', -99, 0); g.out(track(g, tm, delayed(g, tm, 8), null, {})); });
+def('SENSOR', 'Motion Boxes', '動くものを白い枠と番号で追跡する', g => g.out(motion(g, g.level(g.cam, { contrast: 1.08 }), Object.assign({ style: 'hud' }, WHITE))));
+def('SENSOR', 'Constellation', '動きの中心を線で結ぶ。座標つきの星座', g => g.out(motion(g, g.level(g.top('mono', [g.cam]), { brightness1: .5, contrast: 1.25 }), Object.assign({ threshold: .1, minblobsize: .03, maxblobs: 16, style: 'net' }, WHITE))));
+def('SENSOR', 'Auto Mosaic', '動いた所だけが自動でモザイクになる', g => { const c = g.cam, px = g.top('pixelate', [c], { horsize: 26, squarepixels: 1 }); g.key(px, 'horsize', 'Pixel', 6, 60);
+  g.out(g.top('matte', [px, c, motion(g, null, { threshold: .1, minblobsize: .06, style: 'mask', grow: .03 })])); });
+def('SENSOR', 'Spotlight', '動くものだけ色が残り、ほかは暗いモノクロに沈む', g => { const c = g.cam;
+  g.out(g.top('matte', [c, g.level(g.top('mono', [c]), { brightness1: .32 }), g.top('blur', [motion(g, null, { threshold: .1, minblobsize: .06, style: 'mask', grow: .05 })], { preshrink: 4, size: 44 })])); });
+def('SENSOR', 'Heat Seeker', 'サーモグラフィの上で、いちばん明るい所を照準が追う', g =>
+  g.out(track(g, g.blur(g.cam, 6), null, thermal(g, IRON), Object.assign({ threshold: .78, minblobsize: .05, maxblobsize: .6, maxmovedistance: .3, maxblobs: 3, style: 'cross' }, WHITE))));
+def('SENSOR', 'Ghost Diff', '止まっているものは沈み、動いた差分だけが光る', g => { const c = g.cam, df = g.level(g.top('mono', [g.comp('difference', [c, delayed(g, c, 8)])]), { brightness1: 3.2 }); g.key(df, 'brightness1', 'Gain', .5, 8);
+  g.out(g.top('add', [g.level(c, { brightness1: .28 }), g.top('lookup', [g.blur(df, 3), g.ramp([[0, 0, 0, 0, 1], [.35, 0, .55, .9, 1], [.75, .7, 1, 1, 1], [1, 1, 1, 1, 1]])], { channel: 'luminance' })])); });
+def('SENSOR', 'Ironbow', '明るい所ほど熱い、定番のサーモグラフィ', g => g.out(sensorGrain(g, thermal(g, IRON), .12)));
+def('SENSOR', 'White Hot', '白が熱を示す赤外線カメラ。にじむハイライトと粒子', g => { const h = heatLoop(g, g.top('lumalevel', [g.top('mono', [g.blur(g.cam, 3)])], { blacklevel: .08, gamma1: .8, contrast: 1.35 }), .7);
+  const hi = g.top('thresh', [g.level(h, { brightness1: 1.3 })], { rgb: 'rgbaverage', threshold: .8, soften: .6 }); g.out(g.fx('vignette', sensorGrain(g, g.comp('screen', [g.top('blur', [hi], { preshrink: 8, size: 28 }), h]), .16), { amount: .4 })); });
+def('SENSOR', 'Rainbow Heat', '黒から青・緑・黄・赤へ。虹色の熱分布', g => g.out(sensorGrain(g, thermal(g, RAINBOW), .1)));
+def('SENSOR', 'Arctic', '明暗を反転した氷の色のサーモ。暗い所ほど白く光る', g => { const ll = g.top('lumalevel', [g.top('mono', [g.cam])], { invert: 1, blacklevel: .12, brightness1: 1.05, gamma1: .85, contrast: 1.1 });
+  const n = g.top('noise', [g.top('lookup', [heatLoop(g, ll, .85), g.ramp(ARCTIC)], { channel: 'luminance' })], { seed: 9999, period: 0, spread: 0, gain: .25, exp: 2.88, amp: .2, offset: 0 }); g.key(n, 'amp', 'Grain', 0, 1);
+  g.out(g.comp('overlay', [g.top('displace', [g.top('blur', [g.level(n, { blacklevel: .1, brightness1: .9 })], { size: 2 }), n], { vertsource: 'blue', displaceweightx: .01, displaceweighty: .01 }), n])); });
+def('SENSOR', 'Heat Trail', '熱いものが通った跡が、冷めながら残る', g => { const m = g.top('mono', [g.blur(g.cam, 4)]), tr = g.level(g.top('blur', [g.fb('heat', m)], { size: 3 }), { brightness1: .965 }); g.comp('maximum', [tr, m], 'heat');
+  g.key(tr, 'brightness1', 'Trail', .8, .995); g.out(sensorGrain(g, g.top('lookup', ['heat', g.ramp(IRON)], { channel: 'luminance' }), .1)); });
+def('SENSOR', 'Edge Memory', '輪郭にだけ過去のコマが残り、動くと縁がほどける', g => { const c = g.cam, ed = g.top('edge', [c], { strength: 6 }), px = g.top('pixelate', [ed], { horsize: 6, vertsize: 3 }), tm = g.tima(g.cache(c, 64, 2), px, 0, -100);
+  g.key(tm, 'whiteoffset', 'Delay', -126, 0).key(ed, 'strength', 'Edge', 1, 20).key(px, 'horsize', 'Pixel', 1, 40); g.out(tm); });
+def('SENSOR', 'Block Delay', '明るさの違うブロックごとに、別の時刻が映る', g => { const c = g.cam, px = g.top('pixelate', [g.top('mono', [g.blur(c, 8)])], { horsize: 44, squarepixels: 1 }), tm = g.tima(g.cache(c, 60, 2), px, -110, 0);
+  g.key(px, 'horsize', 'Block', 8, 120).key(tm, 'blackoffset', 'Delay', -118, 0); g.out(tm); });
+def('SENSOR', 'Noise Portal', 'ノイズの穴の中だけサーモグラフィが見える', g => { const c = g.cam;
+  const n = g.top('noise', [g.level(c, { invert: .228, blacklevel: .5, brightness1: .37, gamma1: .93, contrast: 1.05 })], { seed: 1451, period: .35, harmon: 0, spread: 5.4, gain: 2, exp: 4, amp: 3, offset: 1, mono: 'off', tz: '=' + T + '*.08' });
+  g.key(n, 'amp', 'Holes', 0, 8); g.out(g.top('matte', [c, thermal(g, IRON), g.top('thresh', [n], { threshold: 1 })])); });
+def('SENSOR', 'Drip', '映像がノイズに引かれて縦に溶け落ちる', g => g.out(drip(g, g.cam, .45)));
+def('SENSOR', 'Time Drip', '溶けた形のとおりに、過去のコマが流れ込む', g => { const c = g.cam, tm = g.tima(g.cache(c, 100), drip(g, c, 1), -90, 0); g.key(tm, 'blackoffset', 'Delay', -99, 0); g.out(tm); });
+def('SENSOR', 'Scanner', '走査線が上下に動き、通った側だけサーモグラフィに変わる', g => { const ph = '=sin(' + T + '*.9)*.4';
+  const m = g.ramp([[0, 1, 1, 1, 1], [.5, 1, 1, 1, 1], [.5, 0, 0, 0, 0], [1, 0, 0, 0, 0]], { type: 'vertical', phase: ph }), line = g.ramp([[0, 0, 0, 0, 1], [.49, 0, 0, 0, 1], [.5, .55, 1, .85, 1], [.51, 0, 0, 0, 1], [1, 0, 0, 0, 1]], { type: 'vertical', phase: ph });
+  g.out(g.top('add', [g.top('matte', [thermal(g, RAINBOW), g.cam, m]), line])); });
+def('SENSOR', 'CCTV', '防犯カメラ。動体検知の枠と録画表示', g => { const m = g.level(g.top('mono', [g.cam]), { blacklevel: .04, gamma1: .9, contrast: 1.2 });
+  const x = g.fx('scanlines', motion(g, m, { style: 'cctv', blobcolorr: 1, blobcolorg: .7, blobcolorb: .1 }), { amount: .16, count: 520 }); g.out(g.top('osd', [filmGrain(g, x, 10.2)], { style: 'cam' })); });
+def('SENSOR', 'Red Alert', '動いたものの周りに、赤い光がにじみ出る', g => { const c = g.cam, m = g.level(g.top('mono', [c]), { blacklevel: .04, contrast: 1.2 });
+  const red = g.top('lookup', [motion(g, null, { threshold: .1, minblobsize: .04, style: 'mask', grow: .01 }), g.ramp([[0, 0, 0, 0, 1], [1, .862, 0, 0, 1]])], { channel: 'luminance' });
+  g.out(filmGrain(g, g.comp('screen', [g.level(g.top('blur', [red], { preshrink: 6, size: 64 }), { brightness1: 1.5 }), m]), 10.1)); });
 
 /** build the graph for one original preset */
 function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio, keys: g.keys || [] }; }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TOE Effect Camera</title>
-<meta name="description" content="100種類のリアルタイムエフェクトを備えたカメラ">
+<meta name="description" content="120種類のリアルタイムエフェクトを備えたカメラ">
 <meta name="theme-color" content="#0b0b0c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -65,8 +65,11 @@ body.rec #recTime{display:flex}
 #retry:has(.hide){display:none}
 #retry .btn{pointer-events:auto}
 
-#cats{display:flex;justify-content:center;gap:clamp(12px,4.6vw,34px);padding:0 16px;flex-wrap:wrap}
-#cats button{font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
+#cats{display:flex;gap:clamp(10px,3.4vw,30px);padding:0 16px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+#cats::-webkit-scrollbar{display:none}
+#cats::before,#cats::after{content:"";flex:1 0 0}
+#cats button{flex:none;font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
+@media (max-width:440px){#cats{gap:10px;padding:0 10px}#cats button{font-size:10.5px;letter-spacing:.14em}}
 #cats button[aria-pressed="true"]{color:var(--text)}
 #cats button[aria-pressed="true"]::after{content:"";position:absolute;left:50%;bottom:0;width:3px;height:3px;border-radius:50%;background:var(--text);transform:translateX(-50%)}
 #strip{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 calc(50% - 60px);scroll-snap-type:x proximity}
@@ -473,6 +476,12 @@ vec4 lk(float v){ float t=clamp((v-uIdx.x)/max(uIdx.y-uIdx.x,1e-5),0.,1.); retur
 void main(){ vec4 c=texture(A,vUV); if(uCh==9){ o=vec4(lk(c.r).r,lk(c.g).g,lk(c.b).b,lk(c.a).a); return; }
   float v=uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:uCh==7?max(c.r,max(c.g,c.b)):uCh==8?max(max(c.r,c.g),max(c.b,c.a)):lum(c.rgb);
   o=lk(v); if(uIA>.5) o.a=lk(c.a).a; }`,
+  /* one layer of a texture-array cache (Cache TOP used as a delay) */
+  arrlayer: `uniform highp sampler2DArray uArr; uniform float uLayer; void main(){ o=texture(uArr,vec3(vUV,uLayer)); }`,
+  /* Blob Track TOP, analysis pass at low resolution: share of the cell where the picture (or its difference to the background input) passes the threshold */
+  blobmask: `uniform float uTh,uBg; uniform int uCh; uniform vec2 uCell;
+float ch(vec4 c){ return uCh==1?c.r:uCh==2?c.g:uCh==3?c.b:uCh==4?c.a:uCh==5?(c.r+c.g+c.b)/3.:uCh==6?(c.r+c.g+c.b+c.a)/4.:lum(c.rgb); }
+void main(){ float n=0.; for(int j=0;j<4;j++) for(int i=0;i<4;i++){ vec2 q=vUV+(vec2(float(i),float(j))-1.5)*.25*uCell*1.6; float a=ch(texture(A,q)); n+=step(uTh,uBg>.5?abs(a-ch(texture(B,q))):a); } o=vec4(vec3(n/16.),1.); }`,
   /* Matte TOP: input 1 over input 2 through one channel of input 3 */
   matte: `uniform int uCh; void main(){ vec4 a=texture(A,vUV), b=texture(B,vUV), k=texture(C,vUV);
   float m=uCh==0?lum(k.rgb):uCh==1?k.r:uCh==2?k.g:uCh==3?k.b:uCh==5?(k.r+k.g+k.b)/3.:uCh==6?(k.r+k.g+k.b+k.a)/4.:k.a; o=mix(b,a,clamp(m,0.,1.)); }`,
@@ -576,7 +585,7 @@ class Engine {
     t = { tex: this.mkTex(w, h, eight), fbo: gl.createFramebuffer(), w, h };
     gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); return this.pool[key] = t; }
-  freeAll() { const gl = this.gl; for (const k in this.pool) { gl.deleteTexture(this.pool[k].tex); gl.deleteFramebuffer(this.pool[k].fbo); } this.pool = {}; for (const t of this.extra) { gl.deleteTexture(t.tex); if (t.fbo) gl.deleteFramebuffer(t.fbo); } this.extra = []; }
+  freeAll() { const gl = this.gl; for (const k in this.pool) { gl.deleteTexture(this.pool[k].tex); gl.deleteFramebuffer(this.pool[k].fbo); } this.pool = {}; for (const t of this.extra) { if (t.tex) gl.deleteTexture(t.tex); if (t.fbo) gl.deleteFramebuffer(t.fbo); if (t.buf) gl.deleteBuffer(t.buf); if (t.st && t.st.sync) { gl.deleteSync(t.st.sync); t.st.sync = null; } } this.extra = []; }
   prog(key, fs, vs) { if (this.progs[key]) return this.progs[key]; const gl = this.gl, p = gl.createProgram();
     for (const [type, src] of [[gl.VERTEX_SHADER, vs || VS], [gl.FRAGMENT_SHADER, HEAD + fs]]) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('shader ' + key + ': ' + gl.getShaderInfoLog(s)); gl.attachShader(p, s); }
@@ -795,7 +804,14 @@ Engine.prototype.OPS = (() => {
   return {
     null: alias, in: function (p, N) { const par = dirname(p), pn = this.g.nodes[par], nm = par ? p.slice(par.length + 1) : p;
       if (pn && pn.compinputs && pn.compinputs[nm]) { const s = this.ref(par, pn.compinputs[nm]); return s ? this.ev(s) : this.black; } return this.in(p, 0); },
-    out: alias, cache: alias, moviefileout: alias, fit: alias, select: function (p) { const s = this.ref(p, this.S(p, 'top', '')); return s ? this.ev(s) : this.black; },
+    out: alias, moviefileout: alias,
+    /* Fit TOP: the picture already covers the frame; a Fit TOP left without an input stands where the video source was */
+    fit: function (p, N) { return N.inputs[0] ? this.in(p, 0) : this.src; },
+    /* Cache TOP: a negative Output Index makes it a delay line (0 = newest) */
+    cache: function (p, N, st) { const A = this.in(p, 0), idx = Math.round(this.P(p, 'outputindex', 0)); if (idx >= 0 || !N.inputs[0]) return A;
+      this.OPS.tex3d.call(this, p, N, st); if (!st.arr || !st.n) return A; const d = Math.min(st.n - 1, Math.round(-idx / st.step));
+      return this.draw('arrlayer', this.tgt(p, A.w, A.h), { uArr: { arr: st.arr }, uLayer: ((st.head - d) % st.K + st.K) % st.K }); },
+    select: function (p) { const s = this.ref(p, this.S(p, 'top', '')); return s ? this.ev(s) : this.black; },
     cacheselect: function (p) { const s = this.ref(p, this.S(p, 'cachetop', '')); return s ? this.ev(s) : this.black; },
     res: function (p) { const A = this.in(p, 0), [w, h] = this.size(p, A); if (Math.round(w) === A.w && Math.round(h) === A.h) return A; return this.draw('copy', this.tgt(p, w, h), { A }); },
     moviefilein: function (p, N, st) { const S = this.sourceFor(p, N), sp = N.params.speed; if (!sp || !sp.e || S !== this.src) return S;
@@ -1194,7 +1210,71 @@ const rotY = a => { const c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0,
 /** colour parameter: '#rrggbb' from the node, or an override set by the Adjust sheet */
 Engine.prototype.C = function (p, name, def) { const k = p + '.' + name; let v = k in this.ov ? this.ov[k] : this.S(p, name, def); if (typeof v !== 'string' || v[0] !== '#') v = def;
   const n = parseInt(v.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+/* ---- Blob Track TOP ------------------------------------------------------------------------------------------
+   TouchDesigner hands the picture to OpenCV; here a low-resolution mask is rendered on the GPU, read back without
+   stalling (pixel-pack buffer + fence, the "Next Frame" download type), and the rectangles are found on the CPU.
+   With a second input the mask is the thresholded difference to that background; without one, the bright areas. */
+function blobFind(st, o) { const gw = st.gw, gh = st.gh, data = st.data, on = st.on || (st.on = new Uint8Array(gw * gh)), stack = st.stack || (st.stack = new Int32Array(gw * gh)), rects = [];
+  for (let i = 0; i < gw * gh; i++) on[i] = data[i * 4] >= 44 ? 1 : 0;
+  for (let s = 0; s < gw * gh; s++) { if (on[s] !== 1) continue; let sp = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1, n = 0; stack[sp++] = s; on[s] = 2;
+    while (sp) { const c = stack[--sp], x = c % gw, y = (c - x) / gw; n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= gw || yy >= gh) continue; const k = yy * gw + xx; if (on[k] === 1) { on[k] = 2; stack[sp++] = k; } } }
+    const big = Math.max((x1 - x0 + 1) / gw, (y1 - y0 + 1) / gh); if (n < 2 || big < o.min || big > o.max) continue; rects.push({ x0: x0 / gw, y0: y0 / gh, x1: (x1 + 1) / gw, y1: (y1 + 1) / gh, n }); }
+  rects.sort((a, b) => b.n - a.n); const keep = [];
+  for (const r of rects) { if (keep.length >= o.count) break; if (keep.some(k => r.x0 >= k.x0 - .01 && r.x1 <= k.x1 + .01 && r.y0 >= k.y0 - .01 && r.y1 <= k.y1 + .01)) continue; keep.push(r); }
+  /* tracking: a rectangle keeps its ID while its centre moves less than Max Move Distance; IDs only go up */
+  const prev = st.blobs, used = new Set(), out = [];
+  for (const r of keep) { const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2; let best = null, bd = o.move;
+    for (const b of prev) { if (used.has(b)) continue; const d = Math.hypot((b.t.x0 + b.t.x1) / 2 - cx, (b.t.y0 + b.t.y1) / 2 - cy); if (d < bd) { bd = d; best = b; } }
+    if (best) { used.add(best); best.t = r; best.lost = 0; best.age++; out.push(best); } else out.push({ id: ++st.next, t: r, d: Object.assign({}, r), lost: 0, age: 0, a: 0 }); }
+  for (const b of prev) if (!used.has(b) && ++b.lost < 10) out.push(b);
+  st.blobs = out; }
+function blobDraw(x, W, H, blobs, o) { const u = Math.min(W, H) / 100, lw = Math.max(1, o.line * u * .14), col = 'rgb(' + o.col.map(v => Math.round(255 * Math.min(1, Math.max(0, v)))).join(',') + ')', z = n => String(n).padStart(2, '0');
+  x.lineWidth = lw; x.strokeStyle = col; x.fillStyle = col; x.font = '600 ' + (2.5 * u) + 'px ui-monospace,Menlo,Consolas,monospace'; x.textBaseline = 'alphabetic'; x.lineJoin = 'miter';
+  const R = blobs.map(b => { const g = o.grow, x0 = (b.d.x0 - g) * W, x1 = (b.d.x1 + g) * W, y0 = (1 - b.d.y1 - g) * H, y1 = (1 - b.d.y0 + g) * H; return { b, x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }; });
+  if (o.style === 'net') { const P = R.slice().sort((a, b) => a.cx - b.cx); x.globalAlpha = .75; x.beginPath(); P.forEach((r, i) => i ? x.lineTo(r.cx, r.cy) : x.moveTo(r.cx, r.cy)); x.stroke();
+    x.globalAlpha = .35; x.beginPath(); for (let i = 0; i + 2 < P.length; i++) { x.moveTo(P[i].cx, P[i].cy); x.lineTo(P[i + 2].cx, P[i + 2].cy); } x.stroke(); }
+  for (const r of R) { const a = r.b.a; if (a < .02) continue; x.globalAlpha = a;
+    if (o.style === 'mask') { x.fillStyle = '#fff'; x.fillRect(r.x, r.y, r.w, r.h); continue; }
+    if (o.style === 'bounds') { x.strokeRect(r.x, r.y, r.w, r.h); }
+    else if (o.style === 'net') { const q = 1.1 * u; x.strokeRect(r.cx - q, r.cy - q, q * 2, q * 2); x.globalAlpha = a * .3; x.strokeRect(r.x, r.y, r.w, r.h); x.globalAlpha = a; }
+    else { /* hud, cross, cctv: faint box, corner brackets, centre mark */
+      const k = Math.max(1.6 * u, Math.min(r.w, r.h) * .2); x.globalAlpha = a * .35; x.strokeRect(r.x, r.y, r.w, r.h); x.globalAlpha = a; x.lineWidth = lw * 1.6; x.beginPath();
+      for (const [px, py, sx, sy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) { x.moveTo(px + sx * k, py); x.lineTo(px, py); x.lineTo(px, py + sy * k); } x.stroke(); x.lineWidth = lw;
+      x.beginPath(); x.moveTo(r.cx - u, r.cy); x.lineTo(r.cx + u, r.cy); x.moveTo(r.cx, r.cy - u); x.lineTo(r.cx, r.cy + u); x.stroke();
+      if (o.style === 'cross') { x.globalAlpha = a * .4; x.beginPath(); x.moveTo(0, r.cy); x.lineTo(W, r.cy); x.moveTo(r.cx, 0); x.lineTo(r.cx, H); x.stroke(); x.globalAlpha = a; } }
+    if (o.label) { const ty = r.y > 4 * u ? r.y - 1.1 * u : r.y + r.h + 3.2 * u, cx = r.b.d.x0 / 2 + r.b.d.x1 / 2, cy = r.b.d.y0 / 2 + r.b.d.y1 / 2;
+      x.fillStyle = col; x.fillText(o.style === 'cctv' ? 'MOTION ' + z(r.b.id % 100) : o.style === 'net' ? cx.toFixed(2) + ' ' + cy.toFixed(2) : 'ID ' + z(r.b.id % 100) + '  ' + cx.toFixed(2) + ',' + cy.toFixed(2), o.style === 'net' ? r.cx + 1.6 * u : r.x, o.style === 'net' ? r.cy - 1.4 * u : ty); } }
+  x.globalAlpha = 1; }
 Object.assign(Engine.prototype.OPS, {
+  /* inputs: 0 picture to analyse, 1 background (optional), 2 picture to draw on (optional, not in TouchDesigner).
+     Extra parameters for presets: style (bounds | hud | cross | net | cctv | mask), label, linewidth, grow, maxblobs */
+  blobtrack(p, N, st) { const gl = this.gl, A = this.in(p, 0), B = N.inputs[1] ? this.in(p, 1) : null, onto = N.inputs[2] ? this.in(p, 2) : A, P = (k, d) => this.P(p, k, d), S = (k, d) => this.S(p, k, d);
+    const land = A.w >= A.h, gw = land ? 96 : Math.max(24, Math.round(96 * A.w / A.h)), gh = land ? Math.max(24, Math.round(96 * A.h / A.w)) : 96;
+    const an = this.draw('blobmask', this.tgt(p + '#an', gw, gh, true), { A, B: B || this.black, uBg: B ? 1 : 0, uTh: P('threshold', .1), uCell: [1 / gw, 1 / gh],
+      uCh: { i: ({ luminance: 0, red: 1, green: 2, blue: 3, alpha: 4, rgbaverage: 5, average: 6 })[S('monosource', 'luminance')] ?? 0 } });
+    if (!st.pbo || st.gw !== gw || st.gh !== gh) { if (st.sync) { gl.deleteSync(st.sync); st.sync = null; } if (!st.pbo) { st.pbo = gl.createBuffer(); this.extra.push({ buf: st.pbo, st }); }
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, gw * gh * 4, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      Object.assign(st, { gw, gh, data: new Uint8Array(gw * gh * 4), on: null, stack: null, blobs: st.blobs || [], next: st.next || 0 }); }
+    const find = { min: P('minblobsize', .02), max: P('maxblobsize', 1), move: P('maxmovedistance', .2), count: Math.max(1, Math.min(24, Math.round(P('maxblobs', 12)))) };
+    if (st.sync) { const r = gl.clientWaitSync(st.sync, 0, 0);
+      if (r === gl.ALREADY_SIGNALED || r === gl.CONDITION_SATISFIED) { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, st.data); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteSync(st.sync); st.sync = null;
+        blobFind(st, find); }
+      else if (r === gl.WAIT_FAILED || ++st.wait > 20) { gl.deleteSync(st.sync); st.sync = null; st.direct = true; } }   /* a browser whose fence never signals: read the small mask directly */
+    if (!st.sync) { gl.bindFramebuffer(gl.FRAMEBUFFER, an.fbo);
+      if (st.direct) { gl.readPixels(0, 0, gw, gh, gl.RGBA, gl.UNSIGNED_BYTE, st.data); blobFind(st, find); }
+      else { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo); gl.readPixels(0, 0, gw, gh, gl.RGBA, gl.UNSIGNED_BYTE, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); st.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); st.wait = 0; gl.flush(); } }
+    /* the drawn rectangles ease towards the tracked ones and fade when a blob is lost */
+    for (const b of st.blobs) { for (const k of ['x0', 'y0', 'x1', 'y1']) b.d[k] += (b.t[k] - b.d[k]) * .45; b.a += ((b.lost ? 0 : 1) - b.a) * (b.lost ? .22 : .4); }
+    const style = S('style', 'bounds'), shown = st.blobs.filter(b => b.a >= .02); if (S('drawblobs', 'on') === 'off' && style !== 'mask') return onto;
+    const t = this.tgt(p, onto.w, onto.h), k = Math.min(1, 1024 / Math.max(t.w, t.h)), cw = Math.max(2, Math.round(t.w * k)), chh = Math.max(2, Math.round(t.h * k));
+    if (!st.cv) { st.cv = document.createElement('canvas'); st.cx = st.cv.getContext('2d'); st.tex = this.mkTex(1, 1, true); this.extra.push({ tex: st.tex }); st.dirty = true; }
+    if (shown.length || st.dirty || st.cv.width !== cw || st.cv.height !== chh) { if (st.cv.width !== cw || st.cv.height !== chh) { st.cv.width = cw; st.cv.height = chh; } st.cx.clearRect(0, 0, cw, chh);
+      blobDraw(st.cx, cw, chh, shown, { style, label: S('label', style === 'bounds' || style === 'mask' ? 'off' : 'on') !== 'off', line: P('linewidth', 2), grow: P('grow', 0), col: [P('blobcolorr', 1), P('blobcolorg', 0), P('blobcolorb', 0)] });
+      gl.bindTexture(gl.TEXTURE_2D, st.tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, st.cv);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); st.dirty = shown.length > 0; }
+    return this.draw('tint', t, { A: { tex: st.tex }, B: onto, uCol: [1, 1, 1, 1], uHasIn: style === 'mask' ? 0 : 1 }); },
+
   glsl(p, N) { const name = this.S(p, 'fx', ''), U = FXSPEC[name]; if (!U) return this.in(p, 0); const I = [0, 1, 2, 3].map(k => N.inputs[k] ? this.in(p, k) : null);
     const un = { A: I[0] || this.black, B: I[1] || this.black, C: I[2] || this.black, D: I[3] || this.black }; for (const u of U) un['u_' + u.name] = u.vec ? this.C(p, u.name, u.def) : this.P(p, u.name, u.def);
     return this.draw('fx_' + name, this.T(p, I[0]), un); },
@@ -1260,7 +1340,7 @@ class GraphBuilder {
 const T = 'absTime.seconds';
 const FOLDERS = [
   { id: 'FILM', jp: 'フィルムとアナログの質感' }, { id: 'GLITCH', jp: 'デジタルの乱れと信号' }, { id: 'LIGHT', jp: '光・グロー・残像' },
-  { id: 'GRAPHIC', jp: '印刷とイラストレーション' }, { id: 'SPACE', jp: '歪み・時間・立体' }];
+  { id: 'GRAPHIC', jp: '印刷とイラストレーション' }, { id: 'SPACE', jp: '歪み・時間・立体' }, { id: 'SENSOR', jp: '追跡・サーマル・時間のずれ' }];
 const ORIGINALS = [];
 const def = (cat, name, desc, fn) => ORIGINALS.push({ cat, name, desc, fn });
 
@@ -1418,6 +1498,69 @@ def('SPACE', 'Slit Stretch', '中央の帯だけ残して外側が伸びる', g 
 def('SPACE', 'Infinity Mirror', '画面の中に画面が続く合わせ鏡', g => { const c = g.cam; const f = g.level(g.xf(g.fb('mix1', c), { sx: .84, sy: .84, rotate: '=sin(' + T + '*0.3)*3', extend: 'zero' }), { brightness1: .96 }); g.comp('over', [f, c], 'mix1'); g.out('mix1'); });
 def('SPACE', 'Shatter', '割れたガラスのようにずれる破片', g => g.out(g.fx('shards', g.cam, {})));
 
+/* ───────── SENSOR ─────────
+   Twenty presets put together from four .toe networks studied side by side:
+     NewProject.2.toe          Noise (over the picture) -> Displace (x .04, y 1) as the Time Machine map, a Cache TOP used as an 8-frame delay,
+                               and a Blob Track TOP whose second input is that delayed picture (background subtraction -> rectangles on what moved)
+     thermal_vision_effect.toe Luma Level, the Feedback/Blur/Level loop composited Over itself, Lookup TOP + colour-key Ramp, Noise -> Displace -> Overlay
+     pixelate_effect.toe       Edge -> Pixelate as a Time Machine map, Matte TOP driven by a thresholded Noise
+     Film_Look_…toe            Level -> Threshold -> Blur -> Screen, Lookup with a black-to-red ramp as halation, Noise TOP as grain
+   RAINBOW is the unused 8-key ramp stored in the thermal file; the other ramps are written here. */
+const IRON = [[0, 0, 0, .03, 1], [.2, .16, 0, .42, 1], [.42, .62, .02, .5, 1], [.62, .95, .28, .06, 1], [.82, 1, .72, .05, 1], [1, 1, 1, .92, 1]];
+const RAINBOW = [[0, 0, 0, 0, .021], [.0888, 0, 0, 0, 1], [.2284, 0, .05, 1, .503], [.3198, .1167, 1, 0, 1], [.4619, 1, .9333, 0, 1], [.7843, 1, .3833, 0, 1], [1, 1, .0833, 0, 1], [1, 1, 0, 0, 1]];
+const ARCTIC = [[0, 0, .01, .06, 1], [.3, .02, .1, .34, 1], [.6, .08, .42, .78, 1], [.85, .55, .88, .97, 1], [1, 1, 1, 1, 1]];
+const WHITE = { blobcolorr: 1, blobcolorg: 1, blobcolorb: 1 };
+/** Cache TOP as a delay of n frames (NewProject.2) */
+const delayed = (g, x, n) => g.top('cache', [x], { cachesize: n + 1, outputindex: -n });
+/** the heat-persistence loop of the thermal file: the blurred last frame, dimmed by `hold`, is composited Over the live picture */
+const heatLoop = (g, src, hold, name) => { name = name || 'heat'; const tr = g.level(g.top('blur', [g.fb(name, src)], { preshrink: 3, size: 6 }), { opacity: hold }); g.comp('over', [tr, src], name); g.key(tr, 'opacity', 'Trail', 0, .98); return name; };
+const thermal = (g, keys, hold) => g.top('lookup', [heatLoop(g, g.top('mono', [g.blur(g.cam, 4)]), hold ?? .8), g.ramp(keys)], { channel: 'luminance' });
+const sensorGrain = (g, x, amp) => { const n = g.top('noise', [x], { seed: '=9999+floor(' + T + '*24)', period: 0, spread: 0, gain: .25, exp: 2.88, amp, offset: 0 }); g.key(n, 'amp', 'Grain', 0, .6); return n; };
+/** NewProject.2's melt: the picture plus coloured noise is the displacement map, with almost all of the weight on the vertical axis */
+const drip = (g, c, wy) => { const n = g.top('noise', [c], { seed: 5590, period: 1.18, harmon: 9, spread: 0, gain: 0, exp: 1.74, amp: .55, offset: .435, mono: 'off', tz: '=' + T + '*.06' });
+  const d = g.top('displace', [c, n], { displaceweightx: .04, displaceweighty: wy }); g.key(d, 'displaceweighty', 'Melt', 0, 1.2); return d; };
+/** Blob Track TOP: a = picture to analyse, b = background (the delayed picture -> only what moved), onto = picture the marks are drawn on */
+const track = (g, a, b, onto, par) => { const t = g.top('blobtrack', [a, b, onto], Object.assign({ threshold: .169, minblobsize: .018, maxblobsize: .81, maxmovedistance: .48 }, par)); g.key(t, 'threshold', 'Sense', .02, .6); return t; };
+const motion = (g, onto, par) => track(g, g.cam, delayed(g, g.cam, 6), onto, Object.assign({ threshold: .12, minblobsize: .05, maxmovedistance: .3 }, par));
+
+def('SENSOR', 'Tracker', '動いた所を四角で追う。映像はノイズで時間が溶ける', g => { const c = g.cam, tm = g.tima(g.cache(c, 100), drip(g, c, 1), -30, 0); g.key(tm, 'blackoffset', 'Delay', -99, 0); g.out(track(g, tm, delayed(g, tm, 8), null, {})); });
+def('SENSOR', 'Motion Boxes', '動くものを白い枠と番号で追跡する', g => g.out(motion(g, g.level(g.cam, { contrast: 1.08 }), Object.assign({ style: 'hud' }, WHITE))));
+def('SENSOR', 'Constellation', '動きの中心を線で結ぶ。座標つきの星座', g => g.out(motion(g, g.level(g.top('mono', [g.cam]), { brightness1: .5, contrast: 1.25 }), Object.assign({ threshold: .1, minblobsize: .03, maxblobs: 16, style: 'net' }, WHITE))));
+def('SENSOR', 'Auto Mosaic', '動いた所だけが自動でモザイクになる', g => { const c = g.cam, px = g.top('pixelate', [c], { horsize: 26, squarepixels: 1 }); g.key(px, 'horsize', 'Pixel', 6, 60);
+  g.out(g.top('matte', [px, c, motion(g, null, { threshold: .1, minblobsize: .06, style: 'mask', grow: .03 })])); });
+def('SENSOR', 'Spotlight', '動くものだけ色が残り、ほかは暗いモノクロに沈む', g => { const c = g.cam;
+  g.out(g.top('matte', [c, g.level(g.top('mono', [c]), { brightness1: .32 }), g.top('blur', [motion(g, null, { threshold: .1, minblobsize: .06, style: 'mask', grow: .05 })], { preshrink: 4, size: 44 })])); });
+def('SENSOR', 'Heat Seeker', 'サーモグラフィの上で、いちばん明るい所を照準が追う', g =>
+  g.out(track(g, g.blur(g.cam, 6), null, thermal(g, IRON), Object.assign({ threshold: .78, minblobsize: .05, maxblobsize: .6, maxmovedistance: .3, maxblobs: 3, style: 'cross' }, WHITE))));
+def('SENSOR', 'Ghost Diff', '止まっているものは沈み、動いた差分だけが光る', g => { const c = g.cam, df = g.level(g.top('mono', [g.comp('difference', [c, delayed(g, c, 8)])]), { brightness1: 3.2 }); g.key(df, 'brightness1', 'Gain', .5, 8);
+  g.out(g.top('add', [g.level(c, { brightness1: .28 }), g.top('lookup', [g.blur(df, 3), g.ramp([[0, 0, 0, 0, 1], [.35, 0, .55, .9, 1], [.75, .7, 1, 1, 1], [1, 1, 1, 1, 1]])], { channel: 'luminance' })])); });
+def('SENSOR', 'Ironbow', '明るい所ほど熱い、定番のサーモグラフィ', g => g.out(sensorGrain(g, thermal(g, IRON), .12)));
+def('SENSOR', 'White Hot', '白が熱を示す赤外線カメラ。にじむハイライトと粒子', g => { const h = heatLoop(g, g.top('lumalevel', [g.top('mono', [g.blur(g.cam, 3)])], { blacklevel: .08, gamma1: .8, contrast: 1.35 }), .7);
+  const hi = g.top('thresh', [g.level(h, { brightness1: 1.3 })], { rgb: 'rgbaverage', threshold: .8, soften: .6 }); g.out(g.fx('vignette', sensorGrain(g, g.comp('screen', [g.top('blur', [hi], { preshrink: 8, size: 28 }), h]), .16), { amount: .4 })); });
+def('SENSOR', 'Rainbow Heat', '黒から青・緑・黄・赤へ。虹色の熱分布', g => g.out(sensorGrain(g, thermal(g, RAINBOW), .1)));
+def('SENSOR', 'Arctic', '明暗を反転した氷の色のサーモ。暗い所ほど白く光る', g => { const ll = g.top('lumalevel', [g.top('mono', [g.cam])], { invert: 1, blacklevel: .12, brightness1: 1.05, gamma1: .85, contrast: 1.1 });
+  const n = g.top('noise', [g.top('lookup', [heatLoop(g, ll, .85), g.ramp(ARCTIC)], { channel: 'luminance' })], { seed: 9999, period: 0, spread: 0, gain: .25, exp: 2.88, amp: .2, offset: 0 }); g.key(n, 'amp', 'Grain', 0, 1);
+  g.out(g.comp('overlay', [g.top('displace', [g.top('blur', [g.level(n, { blacklevel: .1, brightness1: .9 })], { size: 2 }), n], { vertsource: 'blue', displaceweightx: .01, displaceweighty: .01 }), n])); });
+def('SENSOR', 'Heat Trail', '熱いものが通った跡が、冷めながら残る', g => { const m = g.top('mono', [g.blur(g.cam, 4)]), tr = g.level(g.top('blur', [g.fb('heat', m)], { size: 3 }), { brightness1: .965 }); g.comp('maximum', [tr, m], 'heat');
+  g.key(tr, 'brightness1', 'Trail', .8, .995); g.out(sensorGrain(g, g.top('lookup', ['heat', g.ramp(IRON)], { channel: 'luminance' }), .1)); });
+def('SENSOR', 'Edge Memory', '輪郭にだけ過去のコマが残り、動くと縁がほどける', g => { const c = g.cam, ed = g.top('edge', [c], { strength: 6 }), px = g.top('pixelate', [ed], { horsize: 6, vertsize: 3 }), tm = g.tima(g.cache(c, 64, 2), px, 0, -100);
+  g.key(tm, 'whiteoffset', 'Delay', -126, 0).key(ed, 'strength', 'Edge', 1, 20).key(px, 'horsize', 'Pixel', 1, 40); g.out(tm); });
+def('SENSOR', 'Block Delay', '明るさの違うブロックごとに、別の時刻が映る', g => { const c = g.cam, px = g.top('pixelate', [g.top('mono', [g.blur(c, 8)])], { horsize: 44, squarepixels: 1 }), tm = g.tima(g.cache(c, 60, 2), px, -110, 0);
+  g.key(px, 'horsize', 'Block', 8, 120).key(tm, 'blackoffset', 'Delay', -118, 0); g.out(tm); });
+def('SENSOR', 'Noise Portal', 'ノイズの穴の中だけサーモグラフィが見える', g => { const c = g.cam;
+  const n = g.top('noise', [g.level(c, { invert: .228, blacklevel: .5, brightness1: .37, gamma1: .93, contrast: 1.05 })], { seed: 1451, period: .35, harmon: 0, spread: 5.4, gain: 2, exp: 4, amp: 3, offset: 1, mono: 'off', tz: '=' + T + '*.08' });
+  g.key(n, 'amp', 'Holes', 0, 8); g.out(g.top('matte', [c, thermal(g, IRON), g.top('thresh', [n], { threshold: 1 })])); });
+def('SENSOR', 'Drip', '映像がノイズに引かれて縦に溶け落ちる', g => g.out(drip(g, g.cam, .45)));
+def('SENSOR', 'Time Drip', '溶けた形のとおりに、過去のコマが流れ込む', g => { const c = g.cam, tm = g.tima(g.cache(c, 100), drip(g, c, 1), -90, 0); g.key(tm, 'blackoffset', 'Delay', -99, 0); g.out(tm); });
+def('SENSOR', 'Scanner', '走査線が上下に動き、通った側だけサーモグラフィに変わる', g => { const ph = '=sin(' + T + '*.9)*.4';
+  const m = g.ramp([[0, 1, 1, 1, 1], [.5, 1, 1, 1, 1], [.5, 0, 0, 0, 0], [1, 0, 0, 0, 0]], { type: 'vertical', phase: ph }), line = g.ramp([[0, 0, 0, 0, 1], [.49, 0, 0, 0, 1], [.5, .55, 1, .85, 1], [.51, 0, 0, 0, 1], [1, 0, 0, 0, 1]], { type: 'vertical', phase: ph });
+  g.out(g.top('add', [g.top('matte', [thermal(g, RAINBOW), g.cam, m]), line])); });
+def('SENSOR', 'CCTV', '防犯カメラ。動体検知の枠と録画表示', g => { const m = g.level(g.top('mono', [g.cam]), { blacklevel: .04, gamma1: .9, contrast: 1.2 });
+  const x = g.fx('scanlines', motion(g, m, { style: 'cctv', blobcolorr: 1, blobcolorg: .7, blobcolorb: .1 }), { amount: .16, count: 520 }); g.out(g.top('osd', [filmGrain(g, x, 10.2)], { style: 'cam' })); });
+def('SENSOR', 'Red Alert', '動いたものの周りに、赤い光がにじみ出る', g => { const c = g.cam, m = g.level(g.top('mono', [c]), { blacklevel: .04, contrast: 1.2 });
+  const red = g.top('lookup', [motion(g, null, { threshold: .1, minblobsize: .04, style: 'mask', grow: .01 }), g.ramp([[0, 0, 0, 0, 1], [1, .862, 0, 0, 1]])], { channel: 'luminance' });
+  g.out(filmGrain(g, g.comp('screen', [g.level(g.top('blur', [red], { preshrink: 6, size: 64 }), { brightness1: 1.5 }), m]), 10.1)); });
+
 /** build the graph for one original preset */
 function buildOriginal(p) { const g = new GraphBuilder(); p.fn(g); return { build: 'original', nodes: g.nodes, audio: g.audio, keys: g.keys || [] }; }
 
@@ -1503,7 +1646,7 @@ function select(cat, idx, quiet) { const F = folders(); cat = (cat + F.length) %
   $('tOver').textContent = F[cat].id + '  ' + pad(idx + 1) + ' / ' + pad(n); $('tName').textContent = it.name; $('tDesc').textContent = it.desc;
   $('title').classList.remove('idle'); clearTimeout(titleTimer); titleTimer = setTimeout(() => $('title').classList.add('idle'), 3200);
   if (catChanged || !$('strip').children.length || $('strip').dataset.cat !== F[cat].id) buildStrip();
-  for (const b of $('cats').children) b.setAttribute('aria-pressed', b.dataset.cat === F[cat].id);
+  for (const b of $('cats').children) { const on = b.dataset.cat === F[cat].id; b.setAttribute('aria-pressed', on); if (on && catChanged) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: quiet ? 'auto' : 'smooth' }); }
   [...$('strip').children].forEach((b, i) => { b.setAttribute('aria-selected', i === idx); if (i === idx) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: quiet ? 'auto' : 'smooth' }); });
   if (!standalone) try { history.replaceState(null, '', '#' + it.slug); } catch (e) { }
   persist(); if ($('adj').classList.contains('open')) buildAdjust(); if ($('lib').classList.contains('open')) markLib(); }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TOE Effect Camera</title>
-<meta name="description" content="100種類のリアルタイムエフェクトを備えたカメラ">
+<meta name="description" content="120種類のリアルタイムエフェクトを備えたカメラ">
 <meta name="theme-color" content="#0b0b0c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -63,8 +63,11 @@ body.rec #recTime{display:flex}
 #retry:has(.hide){display:none}
 #retry .btn{pointer-events:auto}
 
-#cats{display:flex;justify-content:center;gap:clamp(12px,4.6vw,34px);padding:0 16px;flex-wrap:wrap}
-#cats button{font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
+#cats{display:flex;gap:clamp(10px,3.4vw,30px);padding:0 16px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+#cats::-webkit-scrollbar{display:none}
+#cats::before,#cats::after{content:"";flex:1 0 0}
+#cats button{flex:none;font:500 11px/1 var(--caps);letter-spacing:.2em;color:var(--faint);padding:8px 0 9px;position:relative;transition:color .2s}
+@media (max-width:440px){#cats{gap:10px;padding:0 10px}#cats button{font-size:10.5px;letter-spacing:.14em}}
 #cats button[aria-pressed="true"]{color:var(--text)}
 #cats button[aria-pressed="true"]::after{content:"";position:absolute;left:50%;bottom:0;width:3px;height:3px;border-radius:50%;background:var(--text);transform:translateX(-50%)}
 #strip{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 calc(50% - 60px);scroll-snap-type:x proximity}
